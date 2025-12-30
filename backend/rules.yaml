@@ -1,0 +1,5 @@
+rules:
+  - id: "regra_exemplo"
+    description: "Exemplo de regra"
+    condition: "motivo == 'Teste'"
+    action: "DESCARTAR"

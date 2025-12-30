@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+pandas
+openpyxl
+python-multipart
+# python-dotenv will be needed for env vars
+python-dotenv
+google-generativeai
+openai
+psycopg2-binary

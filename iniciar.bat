@@ -1,0 +1,23 @@
+@echo off
+echo ==========================================
+echo       INICIANDO SISTEMA EXTRATOR
+echo ==========================================
+
+echo [1/2] Iniciando Backend (FastAPI)...
+echo - Verificando dependencias...
+start "Backend Extrator" cmd /k "cd backend && call venv\Scripts\activate.bat && pip install -r requirements.txt && uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload"
+
+echo [2/2] Iniciando Frontend (React/Vite)...
+start "Frontend Extrator" cmd /k "cd Extrator && npm run dev"
+
+echo.
+echo ==========================================
+echo Servidores iniciados em janelas separadas!
+echo.
+echo Backend: http://127.0.0.1:8000
+echo Frontend: http://localhost:3000
+echo.
+echo Voce pode fechar esta janela se desejar,
+echo mas mantenha as outras duas abertas.
+echo ==========================================
+pause
