@@ -13,7 +13,7 @@ WshShell.Run cmdBackend, 0, False
 ' --------------------------
 ' 2. Iniciar Frontend (Vite)
 ' --------------------------
-WshShell.CurrentDirectory = strPath & "\frontend"
+WshShell.CurrentDirectory = strPath & "\Extrator"
 ' Executa npm run dev via cmd silencioso
 cmdFrontend = "cmd /c npm run dev"
 WshShell.Run cmdFrontend, 0, False

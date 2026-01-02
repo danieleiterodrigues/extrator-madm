@@ -1,6 +1,6 @@
 @echo off
 echo ==========================================
-echo      PARANDO SISTEMA EXTRATOR
+echo      PARANDO SISTEMA EXTRATOR - MADM
 echo ==========================================
 echo.
 echo Matando processos Python (Backend)...
