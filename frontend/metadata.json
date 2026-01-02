@@ -1,0 +1,5 @@
+{
+  "name": "Extrator - Accident Analysis & AI Import",
+  "description": "A high-performance dashboard for accident data extraction, intelligent import, and AI-powered analysis using Gemini.",
+  "requestFramePermissions": []
+}
