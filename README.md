@@ -151,3 +151,4 @@ Acesse [http://localhost:3000](http://localhost:3000) em seu navegador.
 - **Erro "database is locked" (SQLite)**: Pode ocorrer com alto volume de gravações simultâneas. A migração para PostgreSQL é recomendada para ambientes de produção ou alta concorrência.
 - **Backend indisponível**: Verifique se o serviço está rodando na porta 8000 e se não há erros de execução no terminal Python.
 - **Dependências não encontradas**: Certifique-se de que o ambiente virtual (`venv`) está ativado antes de executar os comandos do backend.
+# extrator-madm
