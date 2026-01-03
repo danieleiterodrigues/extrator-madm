@@ -307,23 +307,108 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         # 2. Parse file
         records_data = utils.parse_file(contents, filename)
         
-        # 3. Create PeopleRecord entries
-        people_records = []
+        if not records_data:
+            # Handle empty file case
+            db_import.status = "PROCESSED" # Or ERROR? assume processed empty
+            db.commit()
+            return db_import
+
+        # --- DYNAMIC COLUMN LOGIC START ---
+        from sqlalchemy import inspect, text, Table, MetaData
+        from sqlalchemy.dialects import sqlite
+
+        # Get all keys from file
+        file_columns = set()
+        for r in records_data:
+            file_columns.update(r.keys())
+            
+        # Inspect DB columns
+        inspector = inspect(engine)
+        existing_columns = {c['name'] for c in inspector.get_columns('people_records')}
+        
+        # Identify missing columns
+        # Filter out keys that might map to specific model fields if naming differs, 
+        # but here we rely on utils.parse_file returning normalized headers.
+        # "Core" fields in models.PeopleRecord are: 
+        # id, import_id, nome, data_nascimento, documento, telefone, motivo_acidente, valid, error_message, created_at
+        
+        # We need to map file columns to DB columns. 
+        # Current logic maps:
+        # nome -> nome
+        # data_nascimento/nascimento -> data_nascimento
+        # documento/cpf/rg -> documento
+        # telefone/celular/contato -> telefone
+        # motivo/motivo_acidente/descricao -> motivo_acidente
+        
+        # Any OTHER column in file_columns that is NOT in existing_columns should be added.
+        
+        # Note: 'utils.parse_file' already normalizes keys to lower/strip/etc.
+        
+        new_columns = file_columns - existing_columns
+        
+        # Exclude known non-DB keys if any (none expected from parse_file that shouldn't be valid cols)
+        
+        if new_columns:
+            print(f"DEBUG: Found new columns to add: {new_columns}")
+            with engine.connect() as conn:
+                for col_name in new_columns:
+                    # Sanitize col_name further if needed? parse_file does some.
+                    # Add column as TEXT to be safe
+                    # Check DB type for correct syntax
+                    try:
+                        # SQLite/Postgres syntax is similar for simple ADD COLUMN
+                        alter_query = text(f'ALTER TABLE people_records ADD COLUMN "{col_name}" TEXT')
+                        conn.execute(alter_query)
+                        print(f"DEBUG: Added column '{col_name}'")
+                    except Exception as e:
+                        print(f"ERROR adding column {col_name}: {e}")
+                        # Continue or fail? If fail, data insertion might crash later.
+                        # For now, print and try to continue.
+                conn.commit()
+                
+            # Refresh metadata/model? 
+            # SQLAlchemy Core Table needs reload to see new columns for insert() if we use reflection
+            # But we can just pass the dicts to execute(table.insert(), ...) and if columns exist in DB, it works.
+        
+        # --- PREPARE DATA FOR INSERT ---
+        
+        # We need to prepare the list of dicts. 
+        # We must populate the "Core" fields required by the app login (normalization)
+        # AND keep the dynamic fields.
+        
+        metadata = MetaData()
+        # Reflect table to get all columns including new ones
+        people_records_table = Table('people_records', metadata, autoload_with=engine)
+        
+        final_records = []
+        from datetime import datetime
+        
         for data in records_data:
-            # Normalize fields
+            # Base record dict - start with all raw data
+            # usage of 'row.get' ensures we don't break if key missing in this specific row
+            
+            # Application Logic Normalization
+            # We must set the specific columns expected by logic
+            
             nome = utils.normalize_text(data.get("nome"))
             
-            data_nascimento = utils.normalize_date(data.get("data_nascimento") or data.get("nascimento"))
+            # Dates
+            dt_val = data.get("data_nascimento") or data.get("nascimento")
+            data_nascimento = utils.normalize_date(dt_val)
             
-            documento_raw = data.get("documento") or data.get("cpf") or data.get("rg")
-            documento = utils.normalize_digits(documento_raw)
+            # Docs
+            doc_val = data.get("documento") or data.get("cpf") or data.get("rg")
+            documento = utils.normalize_digits(doc_val)
             
-            telefone_raw = data.get("telefone") or data.get("celular") or data.get("contato")
-            telefone = utils.normalize_digits(telefone_raw)
+            # Phone
+            tel_val = data.get("telefone") or data.get("celular") or data.get("contato")
+            telefone = utils.normalize_digits(tel_val)
             
-            motivo = utils.normalize_text(data.get("motivo") or data.get("motivo_acidente") or data.get("descricao"))
+            # Reason
+            mot_val = data.get("motivo") or data.get("motivo_acidente") or data.get("descricao")
+            motivo = utils.normalize_text(mot_val)
             
-            # Validation Logic
+            # Validation
             is_valid = True
             errors = []
             
@@ -336,25 +421,54 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
             if not documento:
                 is_valid = False
                 errors.append("Documento obrigatório")
+            
+            # RELAXED VALIDATION FOR DYNAMIC COLUMNS
             if not motivo:
-                is_valid = False
-                errors.append("Motivo obrigatório")
+                # Check if we have other potentially useful columns
+                # Filter out standard keys we already checked or nulled
+                known_keys = ["nome", "data_nascimento", "nascimento", "documento", "cpf", "rg", "telefone", "celular", "contato", "motivo", "motivo_acidente", "descricao"]
+                extra_content = [v for k, v in data.items() if k.lower() not in known_keys and v]
+                
+                if extra_content:
+                    # found dynamic content, assume valid and set generic reason
+                    motivo = "Conteúdo em Colunas Extras"
+                else:
+                    is_valid = False
+                    errors.append("Motivo obrigatório")
                 
             error_msg = "; ".join(errors) if errors else None
-
-            record = models.PeopleRecord(
-                import_id=db_import.id,
-                nome=nome,
-                data_nascimento=data_nascimento,
-                documento=documento,
-                telefone=telefone,
-                motivo_acidente=motivo,
-                valid=is_valid,
-                error_message=error_msg
-            )
-            people_records.append(record)
-        
-        db.add_all(people_records)
+            
+            # Construct the final dict for DB insertion
+            # Start with the raw data to capture dynamic columns
+            record_entry = data.copy()
+            
+            # Overwrite/Set specific mapped fields
+            record_entry['import_id'] = db_import.id
+            record_entry['nome'] = nome
+            record_entry['data_nascimento'] = data_nascimento
+            record_entry['documento'] = documento
+            record_entry['telefone'] = telefone
+            record_entry['motivo_acidente'] = motivo
+            record_entry['valid'] = is_valid
+            record_entry['error_message'] = error_msg
+            record_entry['created_at'] = datetime.utcnow()
+            
+            # Cleanup: Remove keys that were effectively aliases like 'cpf', 'rg' IF they are not identifying unique info we want to keep?
+            # User request: "contain columns nonexistent... be inserted". 
+            # So if file has 'cpf', we already mapped it to 'documento'. Do we keep 'cpf' column too? 
+            # If the user allows new columns, 'cpf' would be a new column if not in DB.
+            # 'documento' is in DB. 'cpf' is NOT in DB (likely). 
+            # So 'cpf' would be added as a column.
+            # This results in duplication: data in 'documento' AND data in 'cpf'.
+            # This is acceptable for "ensure we use all fields".
+            
+            final_records.append(record_entry)
+            
+        # Bulk Insert using Core
+        if final_records:
+            # We use the reflected table object to ensure we target all current columns
+            with engine.begin() as conn:
+                 conn.execute(people_records_table.insert(), final_records)
         
         # Update import status
         db_import.status = "PROCESSED"
@@ -364,6 +478,7 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         return db_import
 
     except Exception as e:
+        print(f"UPLOAD ERROR: {e}")
         db_import.status = "ERROR"
         db.commit()
         raise HTTPException(status_code=400, detail=str(e))
@@ -407,6 +522,8 @@ def read_records(
     limit: int = 100, 
     status: Optional[str] = None, # 'valid', 'invalid', 'pending_analysis'
     search: Optional[str] = None,
+    sort_by: Optional[str] = None, # 'id', 'classification'
+    order_desc: bool = True,
     db: Session = Depends(get_db)
 ):
     query = db.query(models.PeopleRecord)
@@ -424,6 +541,8 @@ def read_records(
         query = query.filter(models.PeopleRecord.valid == True)
         if analyzed_ids:
             query = query.filter(~models.PeopleRecord.id.in_(analyzed_ids))
+    elif status == 'analyzed':
+        query = query.join(models.Analysis)
     elif status == 'analyzed_valid':
         query = query.join(models.Analysis).filter(models.Analysis.status == 'Válido')
     elif status == 'analyzed_invalid':
@@ -451,11 +570,70 @@ def read_records(
         query = query.filter(or_(*filters))
         
     total = query.count()
-    records = query.order_by(models.PeopleRecord.created_at.desc()).offset(skip).limit(limit).all()
     
-    if status == 'pending_analysis':
-         ids = [str(r.id) for r in records]
-         print(f"DEBUG: Pending Analysis Query returned {len(records)} items. IDs: {ids}")
+    # Sorting Logic
+    if sort_by == 'id':
+        if order_desc:
+            query = query.order_by(models.PeopleRecord.id.desc())
+        else:
+            query = query.order_by(models.PeopleRecord.id.asc())
+            
+    elif sort_by == 'classification':
+        # Need to join with Analysis if not already joined
+        # But some status filters already joined. SQLAlchemy handles redundant joins smartly usually, 
+        # but explicit outerjoin is safer if we want to include records without analysis (though 'classification' sort implies analysis concern)
+        # If we sort by classification, nulls (no analysis) should probably be last or first.
+        # Let's do outerjoin to be safe.
+        query = query.outerjoin(models.Analysis)
+        if order_desc:
+            query = query.order_by(models.Analysis.status.desc())
+        else:
+            query = query.order_by(models.Analysis.status.asc())
+    else:
+        # Default
+        query = query.order_by(models.PeopleRecord.created_at.desc())
+
+    records = query.offset(skip).limit(limit).all()
+    
+    # --- DYNAMIC COLUMN FETCHING START ---
+    if records:
+        from sqlalchemy import MetaData, Table, select
+        # Reflect table to see ALL current columns (including those added dynamically)
+        metadata = MetaData()
+        # We need to use valid engine connection
+        people_table = Table('people_records', metadata, autoload_with=engine)
+        
+        # Get IDs to fetch raw data
+        record_ids = [r.id for r in records]
+        
+        if record_ids:
+            with engine.connect() as conn:
+                stmt = select(people_table).where(people_table.c.id.in_(record_ids))
+                raw_rows = conn.execute(stmt).mappings().all()
+                
+            # Create a map for fast lookup: id -> raw_row
+            raw_map = {row['id']: dict(row) for row in raw_rows}
+            
+            # Merge logic:
+            # We want: 
+            # 1. The Pydantic model to receive the raw dict (so it sees the extra fields)
+            # 2. But we ALSO need the 'analysis' relationship which is handled by ORM
+            
+            merged_items = []
+            for r in records:
+                # Base data from raw row (contains dynamic columns)
+                # Fallback to Empty dict if not found (shouldn't happen)
+                data = raw_map.get(r.id, {})
+                
+                # Manually attach the relation object from the ORM instance
+                # Pydantic (v2) from_attributes=True + extra='allow' should handle a dict that has an object in it?
+                # Actually, standard Pydantic prefers dicts for input if we want 'extra' fields to key-value map.
+                # If we pass a dict with 'analysis': AnalysisORMObject, Pydantic should validate 'analysis' field against Analysis schema using from_attributes logic.
+                
+                data['analysis'] = r.analysis
+                merged_items.append(data)
+                
+            return {"items": merged_items, "total": total}
 
     return {"items": records, "total": total}
 
@@ -642,7 +820,26 @@ def analyze_batch(records: List[dict], db: Session = Depends(get_db)):
         return short_records
 
     # 3. Prompt Construction (Only for valid records)
-    prompt_records = "\n".join([f"ID: {r.get('id')} | Relato: {r.get('description')}" for r in valid_records])
+    # Build prompt using ALL available fields except internal metadata
+    ignored_keys = ['id', 'import_id', 'valid', 'validity', 'score', 'status', 'created_at', 'analysis', 'error_message', 'record_id']
+    
+    formatted_records = []
+    for r in valid_records:
+        # Build string like "motivo: Colisão | cor: Azul | ..."
+        # Use sorting to ensure deterministic order if needed, or just standard dict order
+        parts = [f"ID: {r.get('id')}"]
+        
+        # Include description/motivo first if available for clarity, though not strictly required if we iterate all
+        # To be nice to the LLM, let's put 'motivo_acidente' or 'description' early if found.
+        # But simple iteration is fine.
+        
+        for k, v in r.items():
+            if k not in ignored_keys:
+                 parts.append(f"{k}: {v}")
+        
+        formatted_records.append(" | ".join(parts))
+
+    prompt_records = "\n".join(formatted_records)
     
     # Check for custom prompt
     custom_prompt = get_setting_value(db, "ANALYSIS_PROMPT", "")
@@ -657,6 +854,8 @@ def analyze_batch(records: List[dict], db: Session = Depends(get_db)):
          # Fallback if user removed the placeholder
          full_prompt = f"{custom_prompt}\n\nRelatos:\n{prompt_records}"
     
+    print(f"DEBUG PROMPT START:\n{full_prompt[:500]}...\nDEBUG PROMPT END") # Logs first 500 chars
+
     # 4. Call AI
     ai_results = []
     

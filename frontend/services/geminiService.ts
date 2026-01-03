@@ -12,6 +12,7 @@ const api = axios.create({
 type RecordToAnalyze = {
   id: string;
   description: string;
+  [key: string]: any; // Allow dynamic columns
 };
 
 export const analyzeAccidentBatch = async (records: RecordToAnalyze[]) => {

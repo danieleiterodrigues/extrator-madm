@@ -126,9 +126,9 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             try {
                 // Refill Queue if empty
                 if (localQueue.length === 0) {
-                    addLog("AI-ENGINE", "Buscando novo lote de registros (50 itens)...");
+                    addLog("AI-ENGINE", "Buscando novo lote de registros (100 itens)...");
                     try {
-                        const newBatch = await dataService.getPendingAnalysisRecords(50);
+                        const newBatch = await dataService.getPendingAnalysisRecords(100);
                          if (newBatch.length === 0) {
                             noRecordsCountRef.current += 1;
                             
@@ -156,8 +156,8 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                     }
                 }
 
-                // Process sub-batch (Next 5 items)
-                const subBatch = localQueue.slice(0, 5);
+                // Process sub-batch (Next 20 items)
+                const subBatch = localQueue.slice(0, 20);
                 
                 if (subBatch.length === 0) {
                      isProcessing = false;

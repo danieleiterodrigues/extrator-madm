@@ -21,6 +21,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ initialSearch, initialStatus 
   const [debouncedSearch, setDebouncedSearch] = useState(initialSearch || '');
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [pagination, setPagination] = useState({ page: 1, pageSize: 50, total: 0 });
+  const [sortConfig, setSortConfig] = useState<{ by: string; order: 'asc' | 'desc' } | undefined>(undefined);
 
   // Debounce search
   useEffect(() => {
@@ -44,7 +45,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ initialSearch, initialStatus 
 
   useEffect(() => {
     fetchData();
-  }, [debouncedSearch, filters.status, pagination.page, pagination.pageSize]);
+  }, [debouncedSearch, filters.status, pagination.page, pagination.pageSize, sortConfig]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -55,7 +56,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ initialSearch, initialStatus 
       const resultsData = await dataService.getAnalysisResults(pagination.page, pagination.pageSize, { 
             search: debouncedSearch,
             status: filters.status === 'Todos' ? undefined : filters.status 
-      });
+      }, sortConfig);
       
       setResults(resultsData.items);
       setPagination(prev => ({ ...prev, total: resultsData.total }));
@@ -95,9 +96,6 @@ const ResultsView: React.FC<ResultsViewProps> = ({ initialSearch, initialStatus 
   };
 
   const handleExport = async () => {
-    // Show some indication? For now just async wait.
-    // Ideally we should have an exportLoading state, but let's reuse loading or just blocking?
-    // Let's just fetch.
     try {
         const exportData = await dataService.getAllAnalysisResults({
              search: debouncedSearch,
@@ -106,7 +104,6 @@ const ResultsView: React.FC<ResultsViewProps> = ({ initialSearch, initialStatus 
 
         if (exportData.length === 0) return;
 
-        // Simple CSV Export
         const headers = ["ID", "Nome", "Documento", "Nascimento", "Telefone", "Relato Original", "Data Análise", "Tipo", "Status", "Justificativa"];
         const csvContent = [
         headers.join(","),
@@ -179,7 +176,7 @@ const ResultsView: React.FC<ResultsViewProps> = ({ initialSearch, initialStatus 
                   <span className="material-symbols-outlined">close</span>
                </button>
             </div>
-            <div className="p-6 space-y-6">
+            <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto custom-scrollbar">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Lead Data Section */}
                     <div className="p-4 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-border-light dark:border-border-dark col-span-2 md:col-span-2">
@@ -207,6 +204,21 @@ const ResultsView: React.FC<ResultsViewProps> = ({ initialSearch, initialStatus 
                             </div>
                         </div>
                     </div>
+
+                    {/* Dynamic Fields Section */}
+                    {selectedItem.dynamicFields && Object.keys(selectedItem.dynamicFields).length > 0 && (
+                        <div className="p-4 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/50 col-span-2">
+                             <span className="text-[10px] uppercase font-bold text-indigo-600 dark:text-indigo-400 tracking-widest block mb-3 border-b border-indigo-200 dark:border-indigo-800 pb-1">Dados Adicionais</span>
+                             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                {Object.entries(selectedItem.dynamicFields).map(([key, value]) => (
+                                    <div key={key}>
+                                        <span className="text-[10px] text-indigo-500/80 dark:text-indigo-300/70 uppercase block truncate" title={key}>{key}</span>
+                                        <span className="text-sm font-medium text-slate-900 dark:text-white block break-words" title={String(value)}>{String(value)}</span>
+                                    </div>
+                                ))}
+                             </div>
+                        </div>
+                    )}
 
                     <div className="p-4 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-border-light dark:border-border-dark col-span-2">
                          <span className="text-[10px] uppercase font-bold text-muted-light dark:text-muted-dark tracking-widest block mb-2">Classificação IA</span>
@@ -363,10 +375,30 @@ const ResultsView: React.FC<ResultsViewProps> = ({ initialSearch, initialStatus 
              </div>
           ) : (
           <table className="w-full text-sm text-left border-collapse">
-            <thead className="text-[10px] text-muted-light dark:text-muted-dark uppercase bg-slate-50 dark:bg-slate-900/50 font-bold border-b border-border-light dark:border-border-dark sticky top-0 backdrop-blur-sm z-10">
+            <thead className="text-[10px] text-muted-light dark:text-muted-dark uppercase bg-slate-50 dark:bg-slate-900/50 font-bold border-b border-border-light dark:border-border-dark sticky top-0 backdrop-blur-sm z-10 w-full">
               <tr>
-                <th className="px-6 py-4 tracking-widest">ID / Timestamp</th>
-                <th className="px-6 py-4 tracking-widest">Classificação IA</th>
+                <th className="px-6 py-4 tracking-widest cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group" onClick={() => setSortConfig(prev => prev?.by === 'id' ? { by: 'id', order: prev.order === 'asc' ? 'desc' : 'asc' } : { by: 'id', order: 'desc' })}>
+                    <div className="flex items-center gap-1">
+                        ID / Timestamp
+                        {sortConfig?.by === 'id' && (
+                            <span className="material-symbols-outlined text-[14px]">{sortConfig.order === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                        )}
+                        {sortConfig?.by !== 'id' && (
+                            <span className="material-symbols-outlined text-[14px] opacity-0 group-hover:opacity-50">unfold_more</span>
+                        )}
+                    </div>
+                </th>
+                <th className="px-6 py-4 tracking-widest cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group" onClick={() => setSortConfig(prev => prev?.by === 'classification' ? { by: 'classification', order: prev.order === 'asc' ? 'desc' : 'asc' } : { by: 'classification', order: 'desc' })}>
+                    <div className="flex items-center gap-1">
+                        Classificação IA
+                        {sortConfig?.by === 'classification' && (
+                            <span className="material-symbols-outlined text-[14px]">{sortConfig.order === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                        )}
+                        {sortConfig?.by !== 'classification' && (
+                            <span className="material-symbols-outlined text-[14px] opacity-0 group-hover:opacity-50">unfold_more</span>
+                        )}
+                    </div>
+                </th>
                 <th className="px-6 py-4 tracking-widest">Justificativa Semântica</th>
 
                 <th className="px-6 py-4 tracking-widest text-center">Status Final</th>

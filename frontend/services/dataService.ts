@@ -5,7 +5,7 @@ const API_URL = 'http://127.0.0.1:8000';
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 60000, // 60s timeout
+  timeout: 600000, // 600s timeout
 });
 
 export const dataService = {
@@ -105,7 +105,7 @@ export const dataService = {
     }
   },
   
-  getAnalysisResults: async (page = 1, limit = 50, filters: any = {}) => {
+  getAnalysisResults: async (page = 1, limit = 50, filters: any = {}, sort?: { by: string, order: 'asc' | 'desc' }) => {
     try {
       const skip = (page - 1) * limit;
       let url = `/records?skip=${skip}&limit=${limit}`;
@@ -113,6 +113,13 @@ export const dataService = {
       // Handle Filters
       if (filters.search) url += `&search=${encodeURIComponent(filters.search)}`;
       
+      // Handle Sorting
+      if (sort && sort.by) {
+          url += `&sort_by=${sort.by}`;
+          if (sort.order === 'desc') url += `&order_desc=true`;
+          else url += `&order_desc=false`;
+      }
+
       if (filters.status === 'Válido') url += `&status=analyzed_valid`;
       else if (filters.status === 'Inválido') url += `&status=analyzed_invalid`;
       else if (filters.status === 'Atenção') url += `&status=analyzed_attention`;
@@ -120,34 +127,42 @@ export const dataService = {
       else if (filters.status === 'Ignorado') url += `&status=Ignorado`;
       else {
           // Default: Fetch all analyzed records (Valid + Invalid + Attention)
-          url += `&status=valid`; 
+          url += `&status=analyzed`; 
       }
 
       const response = await api.get(url);
       
-      // Client side filter: Only filter by analysis if NOT Ignorado status
-      // If Ignorado, we expect items with NO analysis
-      let items = response.data.items;
-      if (filters.status !== 'Ignorado') {
-         items = items.filter((r: any) => r.analysis);
-      }
+      const items = response.data.items;
 
       return {
-        items: items.map((record: any) => ({
-            id: record.id.toString(),
-            time: new Date(record.created_at).toLocaleString(),
-            type: record.analysis?.status || 'N/A', // Classification/Status
-            justification: record.analysis?.justificativa || 'Sem análise',
-            score: record.analysis?.score || 0,
-            status: record.analysis?.status || (record.valid ? 'Pendente' : 'Ignorado'), // Check validity first
-            highlight: record.analysis?.status === 'Inválido' ? 'danger' : undefined,
-            // Lead Data
-            nome: record.nome || 'N/A',
-            documento: record.documento || 'N/A',
-            data_nascimento: record.data_nascimento || 'N/A',
-            telefone: record.telefone || 'N/A',
-            motivo_acidente: record.motivo_acidente || 'N/A'
-        })),
+        items: items.map((record: any) => {
+            // Identify Dynamic Columns
+            const knownKeys = ['id', 'import_id', 'created_at', 'valid', 'error_message', 'analysis', 'nome', 'documento', 'data_nascimento', 'telefone', 'motivo_acidente'];
+            const dynamicFields: Record<string, any> = {};
+            
+            Object.keys(record).forEach(key => {
+                if (!knownKeys.includes(key)) {
+                    dynamicFields[key] = record[key];
+                }
+            });
+
+            return {
+                id: record.id.toString(),
+                time: new Date(record.created_at).toLocaleString(),
+                type: record.analysis?.status || 'N/A', // Classification/Status
+                justification: record.analysis?.justificativa || 'Sem análise',
+                score: record.analysis?.score || 0,
+                status: record.analysis?.status || (record.valid ? 'Pendente' : 'Ignorado'), // Check validity first
+                highlight: record.analysis?.status === 'Inválido' ? 'danger' : undefined,
+                // Lead Data
+                nome: record.nome || 'N/A',
+                documento: record.documento || 'N/A',
+                data_nascimento: record.data_nascimento || 'N/A',
+                telefone: record.telefone || 'N/A',
+                motivo_acidente: record.motivo_acidente || 'N/A',
+                dynamicFields: dynamicFields
+            };
+        }),
         total: response.data.total
       };
     } catch (error) {
@@ -197,21 +212,34 @@ export const dataService = {
         // So I should keep this filter to ensure consistency with what "Results" means (Analyzed records).
         const items = response.data.items.filter((r: any) => r.analysis);
 
-        return items.map((record: any) => ({
-            id: record.id.toString(),
-            time: new Date(record.created_at).toLocaleString(),
-            type: record.analysis?.status || 'N/A', 
-            justification: record.analysis?.justificativa || 'Sem análise',
-            score: record.analysis?.score || 0,
-            status: record.analysis?.status || 'Pendente',
-            highlight: record.analysis?.status === 'Inválido' ? 'danger' : undefined,
-            // Lead Data
-            nome: record.nome || 'N/A',
-            documento: record.documento || 'N/A',
-            data_nascimento: record.data_nascimento || 'N/A',
-            telefone: record.telefone || 'N/A',
-            motivo_acidente: record.motivo_acidente || 'N/A'
-        }));
+        return items.map((record: any) => {
+             // Identify Dynamic Columns
+            const knownKeys = ['id', 'import_id', 'created_at', 'valid', 'error_message', 'analysis', 'nome', 'documento', 'data_nascimento', 'telefone', 'motivo_acidente'];
+            const dynamicFields: Record<string, any> = {};
+            
+            Object.keys(record).forEach(key => {
+                if (!knownKeys.includes(key)) {
+                    dynamicFields[key] = record[key];
+                }
+            });
+
+            return {
+                id: record.id.toString(),
+                time: new Date(record.created_at).toLocaleString(),
+                type: record.analysis?.status || 'N/A', 
+                justification: record.analysis?.justificativa || 'Sem análise',
+                score: record.analysis?.score || 0,
+                status: record.analysis?.status || 'Pendente',
+                highlight: record.analysis?.status === 'Inválido' ? 'danger' : undefined,
+                // Lead Data
+                nome: record.nome || 'N/A',
+                documento: record.documento || 'N/A',
+                data_nascimento: record.data_nascimento || 'N/A',
+                telefone: record.telefone || 'N/A',
+                motivo_acidente: record.motivo_acidente || 'N/A',
+                dynamicFields: dynamicFields
+            };
+        });
 
     } catch (error) {
         console.error("Error fetching all results for export", error);
@@ -248,13 +276,20 @@ export const dataService = {
       // Let's just fetch existing records and pick first N that don't have analysis.
       // Since `getDashboardRecords` returns mapped objects, I might not see analysis status clearly unless I map it.
       // Use the new backend filter for pending analysis
+      // Use the new backend filter for pending analysis
       const response = await api.get(`/records?limit=${limit}&status=pending_analysis`); 
       const pending = response.data.items;
       
-      return pending.map((record: any) => ({
-        id: record.id.toString(),
-        description: record.motivo_acidente || "Sem descrição"
-      }));
+      return pending.map((record: any) => {
+        // Capture all fields for analysis context
+        const { id, import_id, created_at, valid, error_message, analysis, ...rest } = record;
+        
+        return {
+            id: record.id.toString(),
+            description: record.motivo_acidente || "Sem descrição", // Keep for compatibility if needed
+            ...rest // Spread remaining dynamic fields (nome, documento, custom_cols, etc)
+        };
+      });
     } catch (error) {
       return [];
     }

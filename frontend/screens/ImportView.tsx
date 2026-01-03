@@ -92,7 +92,7 @@ const ImportView: React.FC<ImportViewProps> = ({ onNavigate }) => {
           <p className="text-slate-900 dark:text-white text-xl font-bold">
             {isUploading ? 'Enviando arquivos...' : 'Arraste e solte arquivos aqui'}
           </p>
-          <p className="text-muted-light dark:text-muted-dark text-xs font-bold uppercase tracking-widest">Formatos aceitos: CSV, XLSX (Máx. 500MB)</p>
+          <p className="text-muted-light dark:text-muted-dark text-xs font-bold uppercase tracking-widest">Formatos aceitos: CSV, XLSX (Máx. 2GB)</p>
         </div>
         <Button variant="outline" className="z-10 shadow-sm border-slate-300 dark:border-slate-700">
           Explorar Arquivos Locais

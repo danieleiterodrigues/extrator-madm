@@ -39,6 +39,7 @@ class PeopleRecord(PeopleRecordBase):
 
     class Config:
         from_attributes = True
+        extra = "allow"
 
 class ImportBase(BaseModel):
     filename: str
