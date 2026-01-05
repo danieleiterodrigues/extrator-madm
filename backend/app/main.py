@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from . import models, schemas, utils
@@ -21,6 +22,19 @@ class AnalysisResult(BaseModel):
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Extrator de Acidentes API")
+
+# Serve Static Files (Frontend)
+# In production (Docker), the frontend build is copied to /app/static or similar
+# We will assume a relative path '../frontend/dist' for local dev, or valid path in Docker
+static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../static")
+if not os.path.exists(static_dir):
+    # Fallback for local dev if dist is in frontend folder
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../frontend/dist")
+
+if os.path.exists(static_dir):
+    app.mount("/assets", StaticFiles(directory=f"{static_dir}/assets"), name="assets")
+else:
+    print(f"WARNING: Static directory {static_dir} not found. Frontend serving disabled.")
 
 # --- STARTUP: Ensure Admin User Exists ---
 @app.on_event("startup")
@@ -942,3 +956,14 @@ def analyze_batch(records: List[dict], db: Session = Depends(get_db)):
         print(f"AI Provider Error: {e}")
         # Identify if it was failure to generate
         raise HTTPException(status_code=500, detail=str(e))
+
+# SPA Catch-all (Must be last)
+# Use global static_dir computed earlier
+if os.path.exists(static_dir):
+    from fastapi.responses import FileResponse
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Exclude API routes just in case they fell through (shouldn't happen if defined above)
+        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi"):
+             raise HTTPException(status_code=404)
+        return FileResponse(f"{static_dir}/index.html")

@@ -1,11 +1,11 @@
 
 import axios from 'axios';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || ''; // Relative path for production
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 120000, // 2 minutes timeout to avoid 'Network Error' on long batches
+  timeout: 120000, // 2 minutes timeout
 });
 
 // Define input type
