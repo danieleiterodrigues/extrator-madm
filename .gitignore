@@ -4,3 +4,8 @@
 
 # permite versionar o example
 !.env.example
+
+# databases
+*.db
+backend/*.db
+
