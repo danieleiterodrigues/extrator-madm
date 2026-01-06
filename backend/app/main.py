@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, BackgroundTasks
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -231,7 +232,20 @@ def startup_db_check():
 
 @app.get("/")
 def read_root():
-    return {"message": "Extrator API is running"}
+    return FileResponse(os.path.join(static_dir, "index.html"))
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    # Pass through API, Assets, and Docs
+    if full_path.startswith("api") or full_path.startswith("assets") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    
+    # Check if file exists in static (e.g. favicon.ico)
+    if os.path.exists(os.path.join(static_dir, full_path)):
+        return FileResponse(os.path.join(static_dir, full_path))
+
+    # Otherwise serve index.html for SPA routing
+    return FileResponse(os.path.join(static_dir, "index.html"))
 
 @app.get("/settings", response_model=schemas.SystemSettings)
 def get_settings(db: Session = Depends(get_db)):
