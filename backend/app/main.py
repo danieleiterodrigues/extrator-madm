@@ -316,6 +316,8 @@ def update_settings(settings: schemas.SystemSettings, db: Session = Depends(get_
     return {"message": "Settings updated (Restart needed for DB changes)"}
 
 def process_import_background(import_id: int, file_path: str):
+    import time
+    start_time = time.time()
     print(f"BACKGROUND: Starting processing for import {import_id} file {file_path}")
     db = SessionLocal()
     db_import = db.query(models.Import).filter(models.Import.id == import_id).first()
@@ -331,7 +333,16 @@ def process_import_background(import_id: int, file_path: str):
     try:
         # 1. Parse file from DISK
         # parse_file now expects a path
-        records_data = utils.parse_file(file_path)
+        print(f"BACKGROUND: Parsing file...")
+        t0 = time.time()
+        # 1. Parse file from DISK using VECTORIZED function
+        # parse_file expects a path
+        print(f"BACKGROUND: Parsing file vectorized...")
+        t0 = time.time()
+        # This now does reading + cleaning + validation
+        records_data = utils.process_import_file_vectorized(file_path, db_import.id)
+        parse_duration = time.time() - t0
+        print(f"BACKGROUND: File parsed in {parse_duration:.2f}s. Rows: {len(records_data) if records_data else 0}")
         
         if not records_data:
             # Handle empty file
@@ -378,105 +389,48 @@ def process_import_background(import_id: int, file_path: str):
         
         from datetime import datetime
         
-        BATCH_SIZE = 1000
+        BATCH_SIZE = 2500 # Increased for production latency
         current_batch = []
         processed_count = 0
         
+        print("BACKGROUND: Starting record validation and insertion loop...")
+        t_loop_start = time.time()
+        
+
         for data in records_data:
-            # Application Logic Normalization
-            nome = utils.normalize_text(data.get("nome"))
-            
-            # Dates
-            dt_val = data.get("data_nascimento") or data.get("nascimento") or data.get("data_de_nascimento")
-            data_nascimento = utils.normalize_date(dt_val)
-            
-            # Docs
-            doc_val = data.get("documento") or data.get("cpf") or data.get("rg")
-            documento = utils.normalize_digits(doc_val)
-            
-            # Phone
-            tel_val = data.get("telefone") or data.get("celular") or data.get("contato")
-            telefone = utils.normalize_digits(tel_val)
-            
-            # Reason
-            mot_val = (
-                data.get("motivo") or 
-                data.get("motivo_acidente") or 
-                data.get("descricao") or 
-                data.get("descrição_da_situação_geradora_do_acidente_ou_doença") or
-                data.get("agente_causador")
-            )
-            motivo = utils.normalize_text(mot_val)
-            
-            # Validation
-            is_valid = True
-            errors = []
-            
-            if not nome:
-                is_valid = False
-                errors.append("Nome obrigatório")
-            if not data_nascimento:
-                is_valid = False
-                errors.append("Data de nascimento inválida ou ausente")
-            if not documento:
-                is_valid = False
-                errors.append("Documento obrigatório")
-            
-            # RELAXED VALIDATION FOR DYNAMIC COLUMNS
-            if not motivo:
-                # Check known keys
-                known_keys = ["nome", "data_nascimento", "nascimento", "data_de_nascimento", "documento", "cpf", "rg", "telefone", "celular", "contato", "motivo", "motivo_acidente", "descricao", "agente_causador", "descrição_da_situação_geradora_do_acidente_ou_doença"]
-                extra_content = [v for k, v in data.items() if k.lower() not in known_keys and v]
-                
-                if extra_content:
-                    motivo = "Conteúdo em Colunas Extras"
-                else:
-                    is_valid = False
-                    errors.append("Motivo obrigatório")
-                
-            error_msg = "; ".join(errors) if errors else None
-            
-            # Construct dict
-            record_entry = data.copy()
-            # Prevent ID conflict: Remove 'id' from file data so DB generates new one
-            if 'id' in record_entry:
-                del record_entry['id']
-                
-            record_entry['import_id'] = db_import.id
-            record_entry['nome'] = nome
-            record_entry['data_nascimento'] = data_nascimento
-            record_entry['documento'] = documento
-            record_entry['telefone'] = telefone
-            record_entry['motivo_acidente'] = motivo
-            record_entry['valid'] = is_valid
-            record_entry['error_message'] = error_msg
-            record_entry['created_at'] = datetime.utcnow()
-            
-            current_batch.append(record_entry)
-            
-            if len(current_batch) >= BATCH_SIZE:
-                with engine.begin() as conn:
-                     conn.execute(people_records_table.insert(), current_batch)
-                processed_count += len(current_batch)
-                db_import.processed_records = processed_count
-                db.commit() # Save progress
-                current_batch = []
-            
-        # Insert remaining
-        if current_batch:
+            # Removed loop logic, replaced by bulk insert below
+            pass 
+
+
+        # BATCHED INSERTION
+        total_records = len(records_data)
+        for i in range(0, total_records, BATCH_SIZE):
+            batch = records_data[i:i + BATCH_SIZE]
+            t_insert = time.time()
             with engine.begin() as conn:
-                 conn.execute(people_records_table.insert(), current_batch)
-            processed_count += len(current_batch)
+                    conn.execute(people_records_table.insert(), batch)
+            
+            insert_dt = time.time() - t_insert
+            processed_count += len(batch)
+            print(f"BACKGROUND: Inserted batch {i//BATCH_SIZE + 1}. Time: {insert_dt:.3f}s. Total: {processed_count}")
+            
+            # Update progress
             db_import.processed_records = processed_count
             db.commit()
-            
+
+        print(f"BACKGROUND: Bulk Insert finished in {time.time() - t_loop_start:.2f}s")
+
         
         db_import.status = "PROCESSED"
         db.commit()
-        print(f"BACKGROUND: Finished processing import {import_id}. Total: {processed_count}")
+        
+        total_duration = time.time() - start_time
+        print(f"BACKGROUND: Finished processing import {import_id} in {total_duration:.2f}s. Total: {processed_count}")
 
     except Exception as e:
         print(f"BACKGROUND ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         db_import.status = "ERROR"
         db.commit()
     finally:
