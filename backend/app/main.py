@@ -234,18 +234,7 @@ def startup_db_check():
 def read_root():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    # Pass through API, Assets, and Docs
-    if full_path.startswith("api") or full_path.startswith("assets") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
-        raise HTTPException(status_code=404, detail="Not Found")
-    
-    # Check if file exists in static (e.g. favicon.ico)
-    if os.path.exists(os.path.join(static_dir, full_path)):
-        return FileResponse(os.path.join(static_dir, full_path))
 
-    # Otherwise serve index.html for SPA routing
-    return FileResponse(os.path.join(static_dir, "index.html"))
 
 @app.get("/settings", response_model=schemas.SystemSettings)
 def get_settings(db: Session = Depends(get_db)):
@@ -1026,7 +1015,12 @@ if os.path.exists(static_dir):
     from fastapi.responses import FileResponse
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        # Exclude API routes just in case they fell through (shouldn't happen if defined above)
-        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi"):
-             raise HTTPException(status_code=404)
-        return FileResponse(f"{static_dir}/index.html")
+        # Exclude API routes just in case they fell through
+        if full_path.startswith("api") or full_path.startswith("assets") or full_path.startswith("docs") or full_path.startswith("openapi"):
+            raise HTTPException(status_code=404)
+        
+        # Check if file exists in static (e.g. favicon.ico)
+        if os.path.exists(os.path.join(static_dir, full_path)):
+            return FileResponse(os.path.join(static_dir, full_path))
+
+        return FileResponse(os.path.join(static_dir, "index.html"))
