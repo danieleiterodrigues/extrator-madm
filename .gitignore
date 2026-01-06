@@ -1,0 +1,6 @@
+# env reais
+.env
+**/.env
+
+# permite versionar o example
+!.env.example

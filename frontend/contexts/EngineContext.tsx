@@ -15,6 +15,7 @@ interface EngineContextType {
     stopEngine: () => void;
     toggleEngine: () => void;
     addLog: (level: EngineLog['level'], message: string) => void;
+    refreshSettings: () => Promise<void>;
 }
 
 const EngineContext = createContext<EngineContextType | undefined>(undefined);
@@ -98,6 +99,9 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (!isRunning) setIsCriticalError(false); // Reset error if we try to start again
         setIsRunning(prev => !prev);
     }
+    
+    // Alias for external use
+    const refreshSettings = fetchSettings;
 
     // Main Processing Loop
     useEffect(() => {
@@ -125,10 +129,15 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
             try {
                 // Refill Queue if empty
+                // RETRY MODE: Fetch TOTAL_BATCH_ITEMS items (calculated below)
+                const BATCH_SIZE = 35;
+                const MAX_CONCURRENT_BATCHES = 7;
+                const TOTAL_BATCH_ITEMS = BATCH_SIZE * MAX_CONCURRENT_BATCHES; // 30 * 5 = 150 items per cycle
+
                 if (localQueue.length === 0) {
-                    addLog("AI-ENGINE", "Buscando novo lote de registros (100 itens)...");
+                    addLog("AI-ENGINE", `Buscando novo lote de registros (${TOTAL_BATCH_ITEMS} itens)...`);
                     try {
-                        const newBatch = await dataService.getPendingAnalysisRecords(100);
+                        const newBatch = await dataService.getPendingAnalysisRecords(TOTAL_BATCH_ITEMS);
                          if (newBatch.length === 0) {
                             noRecordsCountRef.current += 1;
                             
@@ -156,46 +165,88 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                     }
                 }
 
-                // Process sub-batch (Next 20 items)
-                const subBatch = localQueue.slice(0, 20);
+                // --- PARALLEL PROCESSING START ---
+                // We will take up to TOTAL_BATCH_ITEMS items
                 
-                if (subBatch.length === 0) {
+                // Take items for this cycle
+                const cycleItems = localQueue.slice(0, TOTAL_BATCH_ITEMS);
+                
+                if (cycleItems.length === 0) {
                      isProcessing = false;
                      return;
                 }
 
-                const ids = subBatch.map((p: any) => p.id).join(", ");
-                addLog("INFO", `Analisando IDs: [${ids}]`);
-                
-                subBatch.forEach((p: any) => {
-                     addLog("AI-ENGINE", `Analisando ID ${p.id}: "${p.description.substring(0, 40)}..."`);
+                // Split into chunks
+                const chunks = [];
+                for (let i = 0; i < cycleItems.length; i += BATCH_SIZE) {
+                    chunks.push(cycleItems.slice(i, i + BATCH_SIZE));
+                }
+
+                addLog("INFO", `Iniciando processamento paralelo: ${chunks.length} lotes de ~${BATCH_SIZE} itens.`);
+
+                let totalSavedInCycle = 0;
+                let processedIdsInCycle: string[] = [];
+
+                // Process chunks in parallel using Independent Promises
+                // This ensures UI updates AS SOON AS a batch is ready
+                const batchPromises = chunks.map(async (chunk, index) => {
+                    const batchId = index + 1;
+                    
+                    try {
+                        // 1. Analyze
+                        const results = await analyzeAccidentBatch(chunk);
+                        
+                        if (Array.isArray(results)) {
+                            if (results.length > 0) {
+                                // 2. Save Immediately
+                                const saved = await dataService.saveAnalysisBatch(results);
+                                if (saved) {
+                                    const savedCount = results.length;
+                                    totalSavedInCycle += savedCount;
+                                    
+                                    results.forEach((res: any) => {
+                                        processedIdsInCycle.push(res.id.toString());
+                                    });
+
+                                    addLog("SUCCESS", `[Lote ${batchId}] ✅ Salvo com sucesso (+${savedCount} itens).`);
+                                    
+                                    try {
+                                        const newMetrics = await dataService.getEngineMetrics();
+                                        if (newMetrics) setMetrics(newMetrics);
+                                    } catch (e) { /* ignore metric fetch err */ }
+                                    
+                                } else {
+                                    addLog("ERROR", `[Lote ${batchId}] Falha ao salvar no banco.`);
+                                }
+                            } else {
+                                addLog("WARNING", `[Lote ${batchId}] IA retornou lista vazia (sem resultados válidos).`);
+                            }
+                        } else {
+                            // Null/Undefined means error caught in service
+                            addLog("WARNING", `[Lote ${batchId}] Erro na Requisição da IA (Verificar Console).`);
+                        }
+                    } catch (error: any) {
+                        const msg = error.response?.data?.detail || error.message || "Erro desconhecido";
+                        addLog("WARNING", `[Lote ${batchId}] Falha: ${msg}`);
+                    }
                 });
 
-                const results = await analyzeAccidentBatch(subBatch);
+                // Wait for all to finish (just to know when to start next main cycle)
+                await Promise.all(batchPromises);
 
-                if (results && results.length > 0) {
-                   analysisFailureCountRef.current = 0; // Success
-                   addLog("SUCCESS", `Análise IA concluída. Salvando...`);
-                   
-                   const saved = await dataService.saveAnalysisBatch(results);
-                   if (saved) {
-                     results.forEach((res: any) => {
-                         const statusIcon = res.validity === 'Válido' ? '✅' : res.validity === 'Inválido' ? '❌' : '⚠️';
-                         addLog("SUCCESS", `${statusIcon} ID ${res.id}: ${res.validity} - ${res.motivo}`);
-                     });
+                if (totalSavedInCycle > 0) {
+                    analysisFailureCountRef.current = 0;
+                    
+                    // Remove processed items from local queue
+                    const processedSet = new Set(processedIdsInCycle);
+                    localQueue = localQueue.filter((item: any) => !processedSet.has(item.id.toString()));
 
-                     // Remove processed items from local queue
-                     const processedIds = new Set(results.map((r: any) => r.id.toString()));
-                     localQueue = localQueue.filter((item: any) => !processedIds.has(item.id.toString()));
-                     
-                     addLog("SUCCESS", `Lote salvo. Restam ${localQueue.length} na fila local.`);
-                     
-                     // Refresh metrics
-                     const newMetrics = await dataService.getEngineMetrics();
+                    addLog("SUCCESS", `Ciclo concluído. Total processado: ${totalSavedInCycle}. Restam ${localQueue.length} na fila local.`);
+                    
+                    // Final Progress Sync
+                    const newMetrics = await dataService.getEngineMetrics();
                      if (newMetrics) {
                          setMetrics(newMetrics);
-                         
-                         // Update Progress
                          if (initialPendingRef.current > 0) {
                              const currentPending = newMetrics.pendingLeads;
                              const processed = initialPendingRef.current - currentPending;
@@ -203,33 +254,25 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                              setProgress(pct);
                          }
                      }
-                   } else {
-                     addLog("ERROR", "Falha ao salvar resultados no banco.");
-                     // DB might be down
-                     setIsCriticalError(true);
-                     setIsRunning(false);
-                   }
+
                 } else {
-                   analysisFailureCountRef.current += 1;
-                   if (analysisFailureCountRef.current >= 5) {
-                        addLog("ERROR", "Motor de Análise Pausado por falha na análise");
+                     analysisFailureCountRef.current += 1;
+                     addLog("WARNING", `Ciclo sem sucessos. Falhas consecutivas: ${analysisFailureCountRef.current}`);
+                     
+                     if (analysisFailureCountRef.current >= 5) {
+                        addLog("ERROR", "Motor Pausado: Falhas consecutivas excessivas.");
                         setIsRunning(false);
-                        setIsCriticalError(true); // AI Service might be down
+                        setIsCriticalError(true);
                         analysisFailureCountRef.current = 0;
-                   } else {
-                        addLog("WARNING", `Falha na análise da IA ou resposta vazia. Tentativa ${analysisFailureCountRef.current}/5.`);
-                   }
+                     }
                 }
                 
+                // --- PARALLEL PROCESSING END ---
+                
             } catch (err) {
-                analysisFailureCountRef.current += 1;
-                if (analysisFailureCountRef.current >= 5) {
-                     addLog("ERROR", "Motor de Análise Pausado por falha na análise (Erro Crítico)");
-                     setIsRunning(false);
-                     setIsCriticalError(true);
-                     analysisFailureCountRef.current = 0;
-                }
-                addLog("ERROR", `Erro no ciclo de processamento: ${err}`);
+                addLog("ERROR", `Erro Crítico no ciclo: ${err}`);
+                setIsRunning(false);
+                setIsCriticalError(true);
             } finally {
                 isProcessing = false;
             }
@@ -259,7 +302,8 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             startEngine,
             stopEngine,
             toggleEngine,
-            addLog
+            addLog,
+            refreshSettings
         }}>
             {children}
         </EngineContext.Provider>

@@ -51,7 +51,19 @@ class ImportCreate(ImportBase):
 class Import(ImportBase):
     id: int
     uploaded_at: datetime
+    total_records: Optional[int] = 0
+    processed_records: Optional[int] = 0
     records: List[PeopleRecord] = []
+
+    class Config:
+        from_attributes = True
+
+class ImportList(ImportBase):
+    id: int
+    uploaded_at: datetime
+    total_records: Optional[int] = 0
+    processed_records: Optional[int] = 0
+    # records excluded for performance
 
     class Config:
         from_attributes = True
@@ -70,6 +82,7 @@ class SystemSettings(BaseModel):
     db_host: Optional[str] = "localhost"
     db_port: Optional[str] = "5432"
     db_name: Optional[str] = "extrator"
+    db_user: Optional[str] = "postgres"
     db_password: Optional[str] = ""
 
 class UserLogin(BaseModel):

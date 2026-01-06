@@ -26,6 +26,17 @@ const ImportView: React.FC<ImportViewProps> = ({ onNavigate }) => {
 
   useEffect(() => {
     fetchData();
+    
+    // Auto-refresh interval
+    const interval = setInterval(() => {
+      // We could check if we need to refresh (e.g. if any file is validating)
+      // But for simplicity/robustness in this demo, just refresh every 2s
+      // A better optimization would be to check a ref or state, but state in setInterval closure is tricky.
+      // So let's just refresh.
+      fetchData();
+    }, 2000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -150,7 +161,11 @@ const ImportView: React.FC<ImportViewProps> = ({ onNavigate }) => {
                       dot
                       className={file.status === 'validating' ? 'animate-pulse' : ''}
                     >
-                      {file.status === 'validating' ? 'Processando' : 
+                      {file.status === 'validating' ? (
+                        (file.total_records && file.total_records > 0 && file.processed_records !== undefined) 
+                          ? `Processando ${Math.floor((file.processed_records / file.total_records) * 100)}%`
+                          : 'Processando...'
+                      ) : 
                        file.status === 'ready' ? 'Processado' : 'Erro'}
                     </Badge>
                   </td>

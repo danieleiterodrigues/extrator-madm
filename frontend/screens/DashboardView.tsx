@@ -15,16 +15,22 @@ interface DashboardViewProps {
 
 const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const { isRunning, metrics } = useEngine();
 
   // Fetch Stats (Global)
   const fetchStats = useCallback(async () => {
     try {
+      setError(null);
       const data = await dataService.getDashboardStatsRaw();
       setStats(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to fetch stats", error);
+      setError(error.message || "Falha ao carregar dados");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -59,6 +65,13 @@ const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
       
       {/* MACRO STATS SECTION */}
       {/* MACRO STATS SECTION */}
+      {loading && <div className="text-slate-500">Carregando dashboard...</div>}
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 rounded-lg mb-4 flex items-center justify-between">
+            <span>Erro: {error}</span>
+            <Button size="sm" variant="outline" onClick={fetchStats}>Tentar Novamente</Button>
+        </div>
+      )}
       {stats && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-2">
           {/* LEFT COL: MACRO STATS + PIE */}

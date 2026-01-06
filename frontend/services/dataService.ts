@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { AccidentRecord, ProcessingFile, EngineLog, AnalysisResult, DashboardStats, EngineMetrics, User } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || ''; // Relative path for production
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'; // Fallback to local backend
 
 const api = axios.create({
   baseURL: API_URL,
@@ -70,7 +70,9 @@ export const dataService = {
         size: 'Unknown', // Backend doesn't store size yet
         status: imp.status === 'PROCESSED' ? 'ready' : imp.status === 'ERROR' ? 'error' : 'validating',
         addedAt: new Date(imp.uploaded_at).toLocaleDateString(),
-        error: imp.status === 'ERROR' ? 'Erro no processamento' : undefined
+        error: imp.status === 'ERROR' ? 'Erro no processamento' : undefined,
+        total_records: imp.total_records || 0,
+        processed_records: imp.processed_records || 0
       }));
     } catch (error) {
       console.error("Error fetching imports:", error);

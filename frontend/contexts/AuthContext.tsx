@@ -34,6 +34,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error("Failed to parse stored user", e);
         sessionStorage.removeItem('extrator_user');
       }
+    } else {
+      // --- BYPASS LOGIN (TEMPORARY) ---
+      // Auto-login as Admin if no session exists
+      const mockUser: User = {
+        id: 1,
+        username: "ADMIN",
+        name: "Admin Provisório",
+        role: "SUPERADMIN",
+        token: "bypass-token-dev"
+      };
+      setUser(mockUser);
+      // Optional: don't save to session so logout still "works" until refresh
     }
     setLoading(false);
   }, []);

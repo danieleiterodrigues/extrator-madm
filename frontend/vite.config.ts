@@ -8,6 +8,17 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          '/imports': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+          '/upload': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+          '/records': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+          '/dashboard': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+          '/engine': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+          '/analyses': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+          '/settings': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+          '/users': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+          '/login': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+        }
       },
       plugins: [react()],
       define: {

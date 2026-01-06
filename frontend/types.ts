@@ -27,6 +27,8 @@ export interface ProcessingFile {
   status: 'validating' | 'ready' | 'error';
   addedAt: string;
   error?: string;
+  total_records?: number;
+  processed_records?: number;
 }
 
 export interface AnalysisResult {

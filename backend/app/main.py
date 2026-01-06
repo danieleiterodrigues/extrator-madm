@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -39,6 +39,12 @@ else:
 # --- STARTUP: Ensure Admin User Exists ---
 @app.on_event("startup")
 def startup_db_client():
+    # Sync Schema (Ensure columns exist)
+    try:
+        utils.sync_db_schema(engine, models.Base)
+    except Exception as e:
+        print(f"SCHEMA SYNC FAILD: {e}")
+
     db = SessionLocal()
     try:
         # Case insensitive check
@@ -161,12 +167,16 @@ app.add_middleware(
 )
 
 # --- Configuration Helpers ---
-DEFAULT_PROMPT_TEMPLATE = """Analise a lista de relatos de acidentes abaixo. Para cada um, retorne um objeto JSON contendo:
-- id: O ID fornecido na entrada (MUITO IMPORTANTE MANTER O ID CORRETO)
-- motivo: Classificação do acidente (ex: Colisão, Atropelamento, Queda, etc)
-- justificativa: Breve explicação
+DEFAULT_PROMPT_TEMPLATE = """Analise a lista de relatos de acidentes/ocorrências abaixo de saúde e segurança do trabalho.
+Analise TODOS os campos disponíveis (Motivo, Diagnóstico, CID, Descrição, etc).
+Se houver qualquer indício de DOENÇA FÍSICA, ACIDENTE DE TRABALHO, ou DOENÇA PSICOLÓGICA/MENTAL, deve ser considerado VÁLIDO.
+
+Para cada item, retorne JSON:
+- id: O ID de entrada (Mantenha estritamente o mesmo ID)
+- motivo: Classificação sucinta do agravo (ex: "Acidente Típico", "Doença Osteomuscular", "Transtorno Mental", "Lesão Física", etc).
+- justificativa: Explique qual doença, acidente ou CID foi identificado no texto.
 - score: Confiança (0.0 a 1.0)
-- validity: "Válido" se parece ser um acidente de fato, "Inválido" se não for, "Atenção" se incerto.
+- validity: "Válido" (se confirmada doença/acidente), "Inválido" (se não for relacionado a saúde/acidente) ou "Atenção" (se inconclusivo).
 
 Relatos:
 {records}"""
@@ -302,35 +312,33 @@ def update_settings(settings: schemas.SystemSettings, db: Session = Depends(get_
     db.commit()
     return {"message": "Settings updated (Restart needed for DB changes)"}
 
-@app.post("/upload", response_model=schemas.Import)
-async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    # Read file content
-    try:
-        contents = await file.read()
-        filename = file.filename
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Error reading file")
+def process_import_background(import_id: int, file_path: str):
+    print(f"BACKGROUND: Starting processing for import {import_id} file {file_path}")
+    db = SessionLocal()
+    db_import = db.query(models.Import).filter(models.Import.id == import_id).first()
+    if not db_import:
+        print("BACKGROUND: Import record not found.")
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except:
+            pass
+        return
 
-    # 1. Create Import record
-    db_import = models.Import(filename=filename, status="PROCESSING")
-    db.add(db_import)
-    db.commit()
-    db.refresh(db_import)
-    
     try:
-        # 2. Parse file
-        records_data = utils.parse_file(contents, filename)
+        # 1. Parse file from DISK
+        # parse_file now expects a path
+        records_data = utils.parse_file(file_path)
         
         if not records_data:
-            # Handle empty file case
-            db_import.status = "PROCESSED" # Or ERROR? assume processed empty
+            # Handle empty file
+            db_import.status = "PROCESSED"
             db.commit()
-            return db_import
+            return
 
         # --- DYNAMIC COLUMN LOGIC START ---
         from sqlalchemy import inspect, text, Table, MetaData
-        from sqlalchemy.dialects import sqlite
-
+        
         # Get all keys from file
         file_columns = set()
         for r in records_data:
@@ -340,74 +348,43 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         inspector = inspect(engine)
         existing_columns = {c['name'] for c in inspector.get_columns('people_records')}
         
-        # Identify missing columns
-        # Filter out keys that might map to specific model fields if naming differs, 
-        # but here we rely on utils.parse_file returning normalized headers.
-        # "Core" fields in models.PeopleRecord are: 
-        # id, import_id, nome, data_nascimento, documento, telefone, motivo_acidente, valid, error_message, created_at
-        
-        # We need to map file columns to DB columns. 
-        # Current logic maps:
-        # nome -> nome
-        # data_nascimento/nascimento -> data_nascimento
-        # documento/cpf/rg -> documento
-        # telefone/celular/contato -> telefone
-        # motivo/motivo_acidente/descricao -> motivo_acidente
-        
-        # Any OTHER column in file_columns that is NOT in existing_columns should be added.
-        
-        # Note: 'utils.parse_file' already normalizes keys to lower/strip/etc.
-        
+        # columns to add
         new_columns = file_columns - existing_columns
         
-        # Exclude known non-DB keys if any (none expected from parse_file that shouldn't be valid cols)
-        
         if new_columns:
-            print(f"DEBUG: Found new columns to add: {new_columns}")
+            print(f"BACKGROUND: Found new columns to add: {new_columns}")
             with engine.connect() as conn:
                 for col_name in new_columns:
-                    # Sanitize col_name further if needed? parse_file does some.
-                    # Add column as TEXT to be safe
-                    # Check DB type for correct syntax
                     try:
                         # SQLite/Postgres syntax is similar for simple ADD COLUMN
                         alter_query = text(f'ALTER TABLE people_records ADD COLUMN "{col_name}" TEXT')
                         conn.execute(alter_query)
-                        print(f"DEBUG: Added column '{col_name}'")
+                        print(f"BACKGROUND: Added column '{col_name}'")
                     except Exception as e:
-                        print(f"ERROR adding column {col_name}: {e}")
-                        # Continue or fail? If fail, data insertion might crash later.
-                        # For now, print and try to continue.
+                        print(f"BACKGROUND ERROR adding column {col_name}: {e}")
                 conn.commit()
-                
-            # Refresh metadata/model? 
-            # SQLAlchemy Core Table needs reload to see new columns for insert() if we use reflection
-            # But we can just pass the dicts to execute(table.insert(), ...) and if columns exist in DB, it works.
         
-        # --- PREPARE DATA FOR INSERT ---
+        # Update Total Records Count
+        db_import.total_records = len(records_data)
+        db.commit()
         
-        # We need to prepare the list of dicts. 
-        # We must populate the "Core" fields required by the app login (normalization)
-        # AND keep the dynamic fields.
-        
+        # --- PREPARE DATA FOR INSERT (BATCHED) ---
         metadata = MetaData()
         # Reflect table to get all columns including new ones
         people_records_table = Table('people_records', metadata, autoload_with=engine)
         
-        final_records = []
         from datetime import datetime
         
+        BATCH_SIZE = 1000
+        current_batch = []
+        processed_count = 0
+        
         for data in records_data:
-            # Base record dict - start with all raw data
-            # usage of 'row.get' ensures we don't break if key missing in this specific row
-            
             # Application Logic Normalization
-            # We must set the specific columns expected by logic
-            
             nome = utils.normalize_text(data.get("nome"))
             
             # Dates
-            dt_val = data.get("data_nascimento") or data.get("nascimento")
+            dt_val = data.get("data_nascimento") or data.get("nascimento") or data.get("data_de_nascimento")
             data_nascimento = utils.normalize_date(dt_val)
             
             # Docs
@@ -419,7 +396,13 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
             telefone = utils.normalize_digits(tel_val)
             
             # Reason
-            mot_val = data.get("motivo") or data.get("motivo_acidente") or data.get("descricao")
+            mot_val = (
+                data.get("motivo") or 
+                data.get("motivo_acidente") or 
+                data.get("descricao") or 
+                data.get("descrição_da_situação_geradora_do_acidente_ou_doença") or
+                data.get("agente_causador")
+            )
             motivo = utils.normalize_text(mot_val)
             
             # Validation
@@ -438,13 +421,11 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
             
             # RELAXED VALIDATION FOR DYNAMIC COLUMNS
             if not motivo:
-                # Check if we have other potentially useful columns
-                # Filter out standard keys we already checked or nulled
-                known_keys = ["nome", "data_nascimento", "nascimento", "documento", "cpf", "rg", "telefone", "celular", "contato", "motivo", "motivo_acidente", "descricao"]
+                # Check known keys
+                known_keys = ["nome", "data_nascimento", "nascimento", "data_de_nascimento", "documento", "cpf", "rg", "telefone", "celular", "contato", "motivo", "motivo_acidente", "descricao", "agente_causador", "descrição_da_situação_geradora_do_acidente_ou_doença"]
                 extra_content = [v for k, v in data.items() if k.lower() not in known_keys and v]
                 
                 if extra_content:
-                    # found dynamic content, assume valid and set generic reason
                     motivo = "Conteúdo em Colunas Extras"
                 else:
                     is_valid = False
@@ -452,11 +433,12 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
                 
             error_msg = "; ".join(errors) if errors else None
             
-            # Construct the final dict for DB insertion
-            # Start with the raw data to capture dynamic columns
+            # Construct dict
             record_entry = data.copy()
-            
-            # Overwrite/Set specific mapped fields
+            # Prevent ID conflict: Remove 'id' from file data so DB generates new one
+            if 'id' in record_entry:
+                del record_entry['id']
+                
             record_entry['import_id'] = db_import.id
             record_entry['nome'] = nome
             record_entry['data_nascimento'] = data_nascimento
@@ -467,37 +449,81 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
             record_entry['error_message'] = error_msg
             record_entry['created_at'] = datetime.utcnow()
             
-            # Cleanup: Remove keys that were effectively aliases like 'cpf', 'rg' IF they are not identifying unique info we want to keep?
-            # User request: "contain columns nonexistent... be inserted". 
-            # So if file has 'cpf', we already mapped it to 'documento'. Do we keep 'cpf' column too? 
-            # If the user allows new columns, 'cpf' would be a new column if not in DB.
-            # 'documento' is in DB. 'cpf' is NOT in DB (likely). 
-            # So 'cpf' would be added as a column.
-            # This results in duplication: data in 'documento' AND data in 'cpf'.
-            # This is acceptable for "ensure we use all fields".
+            current_batch.append(record_entry)
             
-            final_records.append(record_entry)
+            if len(current_batch) >= BATCH_SIZE:
+                with engine.begin() as conn:
+                     conn.execute(people_records_table.insert(), current_batch)
+                processed_count += len(current_batch)
+                db_import.processed_records = processed_count
+                db.commit() # Save progress
+                current_batch = []
             
-        # Bulk Insert using Core
-        if final_records:
-            # We use the reflected table object to ensure we target all current columns
+        # Insert remaining
+        if current_batch:
             with engine.begin() as conn:
-                 conn.execute(people_records_table.insert(), final_records)
+                 conn.execute(people_records_table.insert(), current_batch)
+            processed_count += len(current_batch)
+            db_import.processed_records = processed_count
+            db.commit()
+            
         
-        # Update import status
         db_import.status = "PROCESSED"
         db.commit()
-        db.refresh(db_import)
-        
-        return db_import
+        print(f"BACKGROUND: Finished processing import {import_id}. Total: {processed_count}")
 
     except Exception as e:
-        print(f"UPLOAD ERROR: {e}")
+        print(f"BACKGROUND ERROR: {e}")
         db_import.status = "ERROR"
         db.commit()
-        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db.close()
+        # Clean up temp file
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"BACKGROUND: Removed temp file {file_path}")
+        except Exception as e:
+            print(f"BACKGROUND: Error removing temp file: {e}")
 
-@app.get("/imports", response_model=List[schemas.Import])
+@app.post("/upload", response_model=schemas.Import)
+async def upload_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_db)
+):
+    # Streaming save to temp file
+    try:
+        # Create temp dir if not exists
+        temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../temp_uploads")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Generate unique filename keeping extension
+        name, ext = os.path.splitext(file.filename)
+        unique_name = f"{name}_{os.urandom(4).hex()}{ext}"
+        file_path = os.path.join(temp_dir, unique_name)
+        
+        print(f"UPLOAD: Saving file to {file_path}")
+        with open(file_path, "wb") as buffer:
+            while content := await file.read(1024 * 1024): # 1MB chunks
+                buffer.write(content)
+                
+    except Exception as e:
+        print(f"UPLOAD FAILED SAVE: {e}")
+        raise HTTPException(status_code=400, detail=f"Error saving file: {str(e)}")
+
+    # 1. Create Import record
+    db_import = models.Import(filename=file.filename, status="PROCESSING")
+    db.add(db_import)
+    db.commit()
+    db.refresh(db_import)
+    
+    # 2. Dispatch Background Task
+    background_tasks.add_task(process_import_background, db_import.id, file_path)
+    
+    return db_import
+
+@app.get("/imports", response_model=List[schemas.ImportList])
 def read_imports(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
     print(f"DEBUG: ENTERING read_imports endpoint. LIMIT={limit}")
     try:
@@ -886,18 +912,41 @@ def analyze_batch(records: List[dict], db: Session = Depends(get_db)):
             if not api_key:
                  raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
                  
-            from openai import OpenAI
+            from openai import OpenAI, RateLimitError
+            import time
+            import random
+
             client = OpenAI(api_key=api_key)
             
-            response = client.chat.completions.create(
-                model="gpt-4o-mini", 
-                messages=[
-                    {"role": "system", "content": "You are a helpful data analysis assistant. Return only valid JSON array."},
-                    {"role": "user", "content": full_prompt}
-                ],
-                temperature=0.1
-            )
-            content = response.choices[0].message.content
+            # Retry configuration
+            max_retries = 5
+            base_delay = 1
+            
+            for attempt in range(max_retries):
+                try:
+                    response = client.chat.completions.create(
+                        model="gpt-4o-mini", 
+                        messages=[
+                            {"role": "system", "content": "You are a helpful data analysis assistant. Return only valid JSON array."},
+                            {"role": "user", "content": full_prompt}
+                        ],
+                        temperature=0.1
+                    )
+                    content = response.choices[0].message.content
+                    break # Success, exit retry loop
+                    
+                except RateLimitError as e:
+                    print(f"DEBUG: OpenAI Rate Limit hit (Attempt {attempt+1}/{max_retries}).")
+                    if attempt == max_retries - 1:
+                        print(f"DEBUG: Max retries exhausted for OpenAI.")
+                        raise e
+                    
+                    # Exponential Backoff + Jitter
+                    delay = (base_delay * (2 ** attempt)) + (random.random() * 0.5)
+                    print(f"DEBUG: Sleeping for {delay:.2f} seconds...")
+                    time.sleep(delay)
+                except Exception as e:
+                     raise e
                 
         else: # Default: Gemini
             api_key = get_setting_value(db, "GEMINI_API_KEY")

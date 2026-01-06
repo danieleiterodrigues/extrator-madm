@@ -1,11 +1,11 @@
 
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || ''; // Relative path for production
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'; // Fallback to local backend
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 120000, // 2 minutes timeout
+  timeout: 300000, // 5 minutes timeout
 });
 
 // Define input type
@@ -22,10 +22,7 @@ export const analyzeAccidentBatch = async (records: RecordToAnalyze[]) => {
     return response.data;
   } catch (error: any) {
     console.error("Backend analysis failed:", error);
-    if (error.response) {
-       console.error("Details:", error.response.data);
-    }
-    return null;
+    throw error; // Propagate error to context for logging
   }
 };
 

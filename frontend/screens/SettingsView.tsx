@@ -3,11 +3,13 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { settingsService, SystemSettings } from '../services/settingsService';
 import { useAuth } from '../contexts/AuthContext';
+import { useEngine } from '../contexts/EngineContext';
 import { dataService } from '../services/dataService';
 import { User } from '../types';
 
 const SettingsView: React.FC = () => {
   const { user } = useAuth();
+  const { refreshSettings } = useEngine(); // Import engine context
   const [activeTab, setActiveTab] = useState<'general' | 'users'>('general');
   
   // Settings State
@@ -52,6 +54,7 @@ const SettingsView: React.FC = () => {
       const success = await settingsService.updateSettings(settings);
       setLoading(false);
       if (success) {
+        await refreshSettings(); // Sync Engine Context
         alert("Configurações salvas com sucesso!");
       } else {
         alert("Erro ao salvar: Verifique o console ou se o banco de dados está travado.");

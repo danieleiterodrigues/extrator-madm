@@ -16,11 +16,16 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL:
     # PostgreSQL Configuration
     print(f"DEBUG: Using PostgreSQL Database")
+    
+    # Fix for SQLAlchemy 1.4+ which dropped support for 'postgres://' (used by Railway/Heroku)
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        
     engine = create_engine(
         DATABASE_URL,
         pool_size=20,
         max_overflow=0,
-        pool_timeout=30,
+        pool_timeout=120,
         pool_recycle=1800
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
