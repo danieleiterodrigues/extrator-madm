@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { AccidentRecord, ProcessingFile, EngineLog, AnalysisResult, DashboardStats, EngineMetrics, User } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'; // Fallback to local backend
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'; // Fallback to local backend only if undefined
 
 const api = axios.create({
   baseURL: API_URL,
