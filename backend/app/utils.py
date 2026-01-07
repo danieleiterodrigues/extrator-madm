@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from sqlalchemy import inspect, text
 import numpy as np
+from unidecode import unidecode
 
 def normalize_text(text: str) -> str:
     """Removes leading/trailing whitespace and returns None if empty."""
@@ -147,7 +148,7 @@ def process_import_file_vectorized(file_path: str, import_id: int) -> List[Dict]
         raise ValueError(f"Error reading file: {str(e)}")
     
     # Normalize column names
-    df.columns = [str(col).lower().strip().replace(' ', '_').replace('/', '_').replace('.', '_') for col in df.columns]
+    df.columns = [unidecode(str(col).lower().strip()).replace(' ', '_').replace('/', '_').replace('.', '_') for col in df.columns]
     
     # --- 1. Normalization ---
     # We identify columns based on loose matching logic similar to main.py
