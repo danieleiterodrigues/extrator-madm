@@ -166,11 +166,18 @@ def process_import_file_vectorized(file_path: str, import_id: int) -> List[Dict]
     # --- 1. Normalization ---
     # We identify columns based on loose matching logic similar to main.py
     
-    # Nome
-    if 'nome' in df.columns:
-        df['nome_clean'] = normalize_text_series(df['nome'])
-    else:
-        df['nome_clean'] = None
+    # Nome - COALESCE STRATEGY
+    nome_cols = [c for c in ['nome', 'funcionario', 'trabalhador', 'empregado', 'segurado', 'nome_completo', 'nome_do_segurado', 'paciente'] if c in df.columns]
+    df['nome_clean'] = None
+    if nome_cols:
+        combined_names = None
+        for col in nome_cols:
+            norm_col = normalize_text_series(df[col])
+            if combined_names is None:
+                combined_names = norm_col
+            else:
+                combined_names = combined_names.combine_first(norm_col)
+        df['nome_clean'] = combined_names
 
     # Data Nascimento - COALESCE STRATEGY
     dt_cols = [c for c in ['data_nascimento', 'nascimento', 'data_de_nascimento'] if c in df.columns]
