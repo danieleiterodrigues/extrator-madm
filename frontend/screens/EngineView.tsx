@@ -77,10 +77,10 @@ const EngineView: React.FC<EngineViewProps> = ({ autoStart, onNavigate }) => {
               </div>
               <Badge variant="success">Finalizados</Badge>
             </div>
-            <div className="mt-4 flex items-center gap-2 text-[10px] text-muted-dark">
+            {/* <div className="mt-4 flex items-center gap-2 text-[10px] text-muted-dark">
               <span className="material-symbols-outlined text-[14px] text-success">verified_user</span>
               Motor operacional e estável
-            </div>
+            </div> */}
           </Card>
         </div>
 
