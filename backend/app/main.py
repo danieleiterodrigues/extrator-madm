@@ -380,24 +380,36 @@ def process_import_background(import_id: int, file_path: str):
         
         if new_columns:
             print(f"BACKGROUND: Found new columns to add: {new_columns}")
-            with engine.connect() as conn:
-                for col_name in new_columns:
-                    try:
-                        # SQLite/Postgres syntax is similar for simple ADD COLUMN
-                        alter_query = text(f'ALTER TABLE people_records ADD COLUMN "{col_name}" TEXT')
-                        conn.execute(alter_query)
-                        print(f"BACKGROUND: Added column '{col_name}'")
-                    except Exception as e:
-                        print(f"BACKGROUND ERROR adding column {col_name}: {e}")
-                conn.commit()
+            # Use granular transactions for schema updates to avoid long locks
+            # One connection for all ALTERS, but commit immediately
+            try:
+                with engine.connect() as conn:
+                    with conn.begin(): # Explicit transaction
+                        for col_name in new_columns:
+                            try:
+                                alter_query = text(f'ALTER TABLE people_records ADD COLUMN "{col_name}" TEXT')
+                                conn.execute(alter_query)
+                                print(f"BACKGROUND: Added column '{col_name}'")
+                            except Exception as e:
+                                print(f"BACKGROUND ERROR adding column {col_name}: {e}")
+            except Exception as e:
+                print(f"BACKGROUND: Schema update transaction error: {e}")
+            
+            # FORCE PAUSE to let DB breathe and locks release
+            print("BACKGROUND: Pausing 1s after schema update...")
+            time.sleep(1)
+
         
         # Update Total Records Count
+        # Re-fetch import to ensure session is fresh
+        db.expire(db_import)
         db_import.total_records = len(records_data)
         db.commit()
         
         # --- PREPARE DATA FOR INSERT (BATCHED) ---
         metadata = MetaData()
         # Reflect table to get all columns including new ones
+        # Use a fresh inspector logic if needed, but autoload should hit DB
         people_records_table = Table('people_records', metadata, autoload_with=engine)
         
         from datetime import datetime

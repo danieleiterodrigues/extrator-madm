@@ -147,8 +147,21 @@ def process_import_file_vectorized(file_path: str, import_id: int) -> List[Dict]
     except Exception as e:
         raise ValueError(f"Error reading file: {str(e)}")
     
-    # Normalize column names
-    df.columns = [unidecode(str(col).lower().strip()).replace(' ', '_').replace('/', '_').replace('.', '_') for col in df.columns]
+    # Normalize column names: remove accents, special chars
+    def clean_col(col):
+        # 1. To string, lower, strip
+        s = str(col).lower().strip()
+        # 2. unidecode to Remove Accents (ç -> c, ã -> a)
+        s = unidecode(s)
+        # 3. Replace common separators
+        s = s.replace(' ', '_').replace('/', '_').replace('.', '_').replace('-', '_')
+        # 4. Remove specific noise chars like ? ()
+        s = s.replace('?', '').replace('(', '').replace(')', '')
+        # 5. Fallback: Keep only alphanumeric and _
+        s = re.sub(r'[^a-z0-9_]', '', s)
+        return s
+
+    df.columns = [clean_col(c) for c in df.columns]
     
     # --- 1. Normalization ---
     # We identify columns based on loose matching logic similar to main.py
