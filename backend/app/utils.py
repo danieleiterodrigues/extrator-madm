@@ -254,31 +254,55 @@ def process_import_file_vectorized(file_path: str, import_id: int) -> List[Dict]
 
     # --- 3. Validation ---
     
-    # Nome
-    missing_nome = df['nome_clean'].isna()
-    # Data
-    missing_data = df['data_nascimento_clean'].isna()
-    # Doc
-    missing_doc = df['documento_clean'].isna()
-    # Motivo
-    missing_motivo = df['motivo_clean'].isna()
+    # Telefone
+    missing_telefone = df['telefone_clean'].isna()
+
+    # --- 3. Validation (Loose Strategy) ---
+    # User Request: Ignore ONLY if 5 critical fields are missing.
+    # Fields: Nome, Data, Documento, Motivo, Telefone
     
     df['valid'] = True
     df['error_message'] = ""
     
-    # Helper to append error
-    def append_error(mask, msg):
-        df.loc[mask, 'valid'] = False
-        df.loc[mask, 'error_message'] += msg + "; "
+    # Calculate how many are missing per row
+    # Convert booleans to int (True=1, False=0) and sum
+    missing_count = (
+        missing_nome.astype(int) + 
+        missing_data.astype(int) + 
+        missing_doc.astype(int) + 
+        missing_motivo.astype(int) + 
+        missing_telefone.astype(int)
+    )
+    
+    # Condition: If 4 missing (ALL of them), then Valid = False
+    # Otherwise, it stays True (even if some are missing)
+    mask_invalid = missing_count >= 4
+    
+    df.loc[mask_invalid, 'valid'] = False
+    df.loc[mask_invalid, 'error_message'] = "Registro ignorado: 4 ou mais campos críticos vazios."
+    
+    # Optional: We can still note missing fields in error_message for info, even if valid
+    # But for now, let's keep it clean as requested.
+    
+    # Helper to append warning (keeping valid=True unless total failure)
+    def append_warning(mask, msg):
+        # We append text to error_message but DO NOT set valid=False
+        df.loc[mask, 'error_message'] = df.loc[mask, 'error_message'].astype(str) + msg + "; "
 
-    append_error(missing_nome, "Nome obrigatório")
-    append_error(missing_data, "Data de nascimento inválida ou ausente")
-    append_error(missing_doc, "Documento obrigatório")
-    append_error(missing_motivo, "Motivo obrigatório")
+    # Append warnings for missing fields (so user knows why data might be poor)
+    # Only for valid records (invalid ones already have the big error message)
+    mask_valid = ~mask_invalid
+    
+    append_warning(missing_nome & mask_valid, "Sem Nome")
+    append_warning(missing_data & mask_valid, "Sem Data")
+    append_warning(missing_doc & mask_valid, "Sem Doc")
+    append_warning(missing_motivo & mask_valid, "Sem Motivo")
+    # Phone is less critical usually, maybe skip warning to avoid noise, or add it.
     
     # Clean up trailing semicolon
     df['error_message'] = df['error_message'].astype(str).str.strip('; ')
     df.loc[df['error_message'] == '', 'error_message'] = None
+    df.loc[df['error_message'] == 'nan', 'error_message'] = None
 
     # --- 4. Final Formatting ---
     df['nome'] = df['nome_clean']
