@@ -391,6 +391,9 @@ def process_import_background(import_id: int, file_path: str):
                 print("BACKGROUND: Attempting to acquire schema lock...")
                 with engine.connect() as conn:
                     with conn.begin(): # Explicit transaction
+                        # Set timeout to 5 seconds to avoid infinite hanging
+                        conn.execute(text("SET lock_timeout = 5000")) 
+                        
                         for col_name in new_columns:
                             try:
                                 alter_query = text(f'ALTER TABLE people_records ADD COLUMN "{col_name}" TEXT')
@@ -398,7 +401,9 @@ def process_import_background(import_id: int, file_path: str):
                                 conn.execute(alter_query)
                                 print(f"BACKGROUND: Added column '{col_name}' - SUCCESS")
                             except Exception as e:
-                                print(f"BACKGROUND ERROR adding column {col_name}: {e}")
+                                # Catch timeout or other locking errors
+                                print(f"BACKGROUND WARNING: Could not add column '{col_name}' due to lock/error: {e}")
+                                print("BACKGROUND: Proceeding without this column (data for it will be ignored).")
             except Exception as e:
                 print(f"BACKGROUND: Schema update transaction error: {e}")
             
