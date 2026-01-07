@@ -379,6 +379,11 @@ def process_import_background(import_id: int, file_path: str):
         new_columns = file_columns - existing_columns
         
         if new_columns:
+            # CRITICAL: Commit and close the main session to ensure we don't hold any locks 
+            # while performing ALTER TABLE operations.
+            db.commit()
+            db.close()
+            
             print(f"BACKGROUND: Found new columns to add: {new_columns}")
             # Use granular transactions for schema updates to avoid long locks
             # One connection for all ALTERS, but commit immediately
@@ -398,6 +403,13 @@ def process_import_background(import_id: int, file_path: str):
             # FORCE PAUSE to let DB breathe and locks release
             print("BACKGROUND: Pausing 1s after schema update...")
             time.sleep(1)
+            
+            # Re-open Session
+            db = SessionLocal()
+            db_import = db.query(models.Import).filter(models.Import.id == import_id).first()
+            if not db_import:
+                print("BACKGROUND: Import record vanished after schema update.")
+                return 
 
         
         # Update Total Records Count
