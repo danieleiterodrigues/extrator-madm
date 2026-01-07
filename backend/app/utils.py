@@ -129,7 +129,7 @@ def normalize_date_series(series: pd.Series) -> pd.Series:
     # robust handling for multiple formats requires to_datetime with flexible parsing
     # We use dayfirst=True for BR format 
     dates = pd.to_datetime(series, dayfirst=True, errors='coerce')
-    return dates.dt.strftime("%d-%m-%Y").where(dates.notnull(), None)
+    return dates.dt.strftime("%d/%m/%Y").where(dates.notnull(), None)
 
 def process_import_file_vectorized(file_path: str, import_id: int) -> List[Dict]:
     """
@@ -172,41 +172,61 @@ def process_import_file_vectorized(file_path: str, import_id: int) -> List[Dict]
     else:
         df['nome_clean'] = None
 
-    # Data Nascimento
+    # Data Nascimento - COALESCE STRATEGY
     dt_cols = [c for c in ['data_nascimento', 'nascimento', 'data_de_nascimento'] if c in df.columns]
+    df['data_nascimento_clean'] = None
     if dt_cols:
-        # Take the first one found, assuming priority
-        df['data_nascimento_clean'] = normalize_date_series(df[dt_cols[0]])
-    else:
-        df['data_nascimento_clean'] = None
+        # Iterate and coalesce: prefer first, then fillna with next
+        # But we must NORMALIZE first to ensure "N/A" becomes None/NaT
+        combined_dates = None
+        for col in dt_cols:
+            norm_col = normalize_date_series(df[col])
+            if combined_dates is None:
+                combined_dates = norm_col
+            else:
+                combined_dates = combined_dates.combine_first(norm_col)
+        df['data_nascimento_clean'] = combined_dates
 
-    # Documento
-    doc_cols = [c for c in ['documento', 'cpf', 'rg'] if c in df.columns]
+    # Documento - COALESCE STRATEGY
+    doc_cols = [c for c in ['documento', 'cpf', 'rg', 'numero_de_inscricao'] if c in df.columns]
+    df['documento_clean'] = None
     if doc_cols:
-        df['documento_clean'] = normalize_digits_series(df[doc_cols[0]])
-    else:
-        df['documento_clean'] = None
+        combined_docs = None
+        for col in doc_cols:
+            norm_col = normalize_digits_series(df[col])
+            if combined_docs is None:
+                combined_docs = norm_col
+            else:
+                combined_docs = combined_docs.combine_first(norm_col)
+        df['documento_clean'] = combined_docs
 
-    # Telefone
-    tel_cols = [c for c in ['telefone', 'celular', 'contato'] if c in df.columns]
+    # Telefone - COALESCE STRATEGY
+    tel_cols = [c for c in ['telefone', 'celular', 'contato', 'telefones'] if c in df.columns]
+    df['telefone_clean'] = None
     if tel_cols:
-        df['telefone_clean'] = normalize_digits_series(df[tel_cols[0]])
-    else:
-        df['telefone_clean'] = None
+         combined_tels = None
+         for col in tel_cols:
+            norm_col = normalize_digits_series(df[col])
+            if combined_tels is None:
+                combined_tels = norm_col
+            else:
+                combined_tels = combined_tels.combine_first(norm_col)
+         df['telefone_clean'] = combined_tels
 
-    # Motivo
+    # Motivo - COALESCE STRATEGY (Already existed, just verifying)
     mot_cols = [c for c in ['motivo', 'motivo_acidente', 'descricao', 
                             'descrição_da_situação_geradora_do_acidente_ou_doença', 
-                            'agente_causador'] if c in df.columns]
+                            'agente_causador', 'relato_original'] if c in df.columns]
     
     if mot_cols:
-        # Coalesce: take first non-null
-        # Pandas 'combine_first' or just iterate
-        s_motivo = df[mot_cols[0]]
-        for c in mot_cols[1:]:
-            if c in df.columns:
-                s_motivo = s_motivo.combine_first(df[c])
-        df['motivo_clean'] = normalize_text_series(s_motivo)
+        s_motivo = None
+        for c in mot_cols:
+             norm_col = normalize_text_series(df[c])
+             if s_motivo is None:
+                 s_motivo = norm_col
+             else:
+                 s_motivo = s_motivo.combine_first(norm_col)
+        df['motivo_clean'] = s_motivo
     else:
         df['motivo_clean'] = None
 

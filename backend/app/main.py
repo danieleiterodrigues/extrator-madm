@@ -331,11 +331,11 @@ def update_settings(settings: schemas.SystemSettings, db: Session = Depends(get_
 def process_import_background(import_id: int, file_path: str):
     import time
     start_time = time.time()
-    print(f"BACKGROUND: Starting processing for import {import_id} file {file_path}")
+    print(f"BACKGROUND: Iniciando processamento da importacao {import_id} arquivo {file_path}")
     db = SessionLocal()
     db_import = db.query(models.Import).filter(models.Import.id == import_id).first()
     if not db_import:
-        print("BACKGROUND: Import record not found.")
+        print("BACKGROUND: Registro de importacao nao encontrado.")
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -345,8 +345,8 @@ def process_import_background(import_id: int, file_path: str):
 
     try:
         # 1. Parse file from DISK
-        # parse_file now expects a path
-        print(f"BACKGROUND: Parsing file...")
+        # parse_file allows a path
+        print(f"BACKGROUND: Lendo arquivo...")
         t0 = time.time()
         # 1. Parse file from DISK using VECTORIZED function
         # parse_file expects a path
@@ -384,11 +384,11 @@ def process_import_background(import_id: int, file_path: str):
             db.commit()
             db.close()
             
-            print(f"BACKGROUND: Found new columns to add: {new_columns}")
+            print(f"BACKGROUND: Encontradas novas colunas para adicionar: {new_columns}")
             # Use granular transactions for schema updates to avoid long locks
             # One connection for all ALTERS, but commit immediately
             try:
-                print("BACKGROUND: Attempting to acquire schema lock...")
+                print("BACKGROUND: Tentando adquirir lock de esquema...")
                 with engine.connect() as conn:
                     with conn.begin(): # Explicit transaction
                         # Set timeout to 5 seconds to avoid infinite hanging
@@ -397,27 +397,27 @@ def process_import_background(import_id: int, file_path: str):
                         for col_name in new_columns:
                             try:
                                 alter_query = text(f'ALTER TABLE people_records ADD COLUMN "{col_name}" TEXT')
-                                print(f"BACKGROUND: Executing ALTER for '{col_name}'...")
+                                print(f"BACKGROUND: Executando ALTER para '{col_name}'...")
                                 conn.execute(alter_query)
-                                print(f"BACKGROUND: Added column '{col_name}' - SUCCESS")
+                                print(f"BACKGROUND: Coluna adicionada '{col_name}' - SUCESSO")
                             except Exception as e:
                                 # Catch timeout or other locking errors
-                                print(f"BACKGROUND WARNING: Could not add column '{col_name}' due to lock/error: {e}")
-                                print("BACKGROUND: Proceeding without this column (data for it will be ignored).")
+                                print(f"BACKGROUND AVISO: Nao foi possivel adicionar coluna '{col_name}' devido a lock/erro: {e}")
+                                print("BACKGROUND: Continuando sem esta coluna (dados dela serao ignorados).")
             except Exception as e:
-                print(f"BACKGROUND: Schema update transaction error: {e}")
+                print(f"BACKGROUND: Erro na transacao de atualizacao de esquema: {e}")
             
             # FORCE PAUSE to let DB breathe and locks release
-            print("BACKGROUND: Pausing 1s after schema update...")
+            print("BACKGROUND: Pausando 1s apos atualizacao de esquema...")
             time.sleep(1)
             
             # Re-open Session
-            print("BACKGROUND: Re-opening DB session...")
+            print("BACKGROUND: Reabrindo sessao do DB...")
             db = SessionLocal()
             db_import = db.query(models.Import).filter(models.Import.id == import_id).first()
             if not db_import:
-                print("BACKGROUND: Import record vanished after schema update.")
-                return 
+                print("BACKGROUND: Registro de importacao sumiu apos atualizacao de esquema.")
+                return  
 
         
         # Update Total Records Count
@@ -438,7 +438,7 @@ def process_import_background(import_id: int, file_path: str):
         current_batch = []
         processed_count = 0
         
-        print("BACKGROUND: Starting record validation and insertion loop...")
+        print("BACKGROUND: Iniciando loop de validacao e insercao...")
         t_loop_start = time.time()
         
 
@@ -457,20 +457,20 @@ def process_import_background(import_id: int, file_path: str):
             
             insert_dt = time.time() - t_insert
             processed_count += len(batch)
-            print(f"BACKGROUND: Inserted batch {i//BATCH_SIZE + 1}. Time: {insert_dt:.3f}s. Total: {processed_count}")
+            print(f"BACKGROUND: Inserido lote {i//BATCH_SIZE + 1}. Tempo: {insert_dt:.3f}s. Total: {processed_count}")
             
             # Update progress
             db_import.processed_records = processed_count
             db.commit()
 
-        print(f"BACKGROUND: Bulk Insert finished in {time.time() - t_loop_start:.2f}s")
+        print(f"BACKGROUND: Insercao em massa finalizada em {time.time() - t_loop_start:.2f}s")
 
         
         db_import.status = "PROCESSED"
         db.commit()
         
         total_duration = time.time() - start_time
-        print(f"BACKGROUND: Finished processing import {import_id} in {total_duration:.2f}s. Total: {processed_count}")
+        print(f"BACKGROUND: Processamento da importacao {import_id} finalizado em {total_duration:.2f}s. Total: {processed_count}")
 
     except Exception as e:
         print(f"BACKGROUND ERROR: {e}")
@@ -484,9 +484,9 @@ def process_import_background(import_id: int, file_path: str):
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
-                print(f"BACKGROUND: Removed temp file {file_path}")
+                print(f"BACKGROUND: Arquivo temporario removido {file_path}")
         except Exception as e:
-            print(f"BACKGROUND: Error removing temp file: {e}")
+            print(f"BACKGROUND: Erro ao remover arquivo temporario: {e}")
 
 @app.post("/upload", response_model=schemas.Import)
 async def upload_file(

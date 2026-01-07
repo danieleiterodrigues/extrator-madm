@@ -4,6 +4,29 @@ import { analyzeAccidentBatch } from '../services/geminiService';
 import { settingsService } from '../services/settingsService';
 import { EngineLog } from '../types';
 
+// Helper to translate backend/AI errors
+const translateError = (error: any): string => {
+    let msg = error?.response?.data?.detail || error?.message || String(error);
+    if (!msg) return "Erro desconhecido";
+    
+    const m = msg.toLowerCase();
+    
+    // OpenAI / Gemini specific errors
+    if (m.includes("incorrect api key provided")) return "Chave de API incorreta. Verifique suas configurações em Ajustes.";
+    if (m.includes("invalid api key")) return "Chave de API inválida. Verifique em Ajustes.";
+    if ((m.includes("auth") || m.includes("authentication")) && m.includes("401")) return "Erro de Autenticação (401). Verifique a chave da API.";
+    if (m.includes("rate limit exceeded")) return "Limite de requisições excedido (429). O sistema tentará novamente.";
+    if (m.includes("429")) return "Muitas requisições (429). Aguardando liberação da API.";
+    if (m.includes("insufficient_quota")) return "Cota da API excedida. Verifique seu plano de faturamento.";
+    if (m.includes("model not found")) return "Modelo de IA não encontrado. Verifique permissões da chave.";
+    
+    // General HTTP
+    if (m.includes("500")) return "Erro Interno do Servidor (500).";
+    if (m.includes("network error")) return "Erro de Conexão. Verifique se o backend está rodando.";
+    
+    return msg; 
+};
+
 interface EngineContextType {
     logs: EngineLog[];
     metrics: any;
@@ -158,7 +181,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                         localQueue = [...newBatch];
                         addLog("INFO", `Fila abastecida com ${localQueue.length} registros.`);
                     } catch (fetchErr) {
-                        addLog("ERROR", `Falha ao buscar registros: ${fetchErr}`);
+                        addLog("ERROR", `Falha ao buscar registros: ${translateError(fetchErr)}`);
                         setIsCriticalError(true);
                         setIsRunning(false);
                         return;
@@ -226,7 +249,8 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                             addLog("WARNING", `[Lote ${batchId}] Erro na Requisição da IA (Verificar Console).`);
                         }
                     } catch (error: any) {
-                        const msg = error.response?.data?.detail || error.message || "Erro desconhecido";
+                        // Translate known errors
+                        const msg = translateError(error);
                         addLog("WARNING", `[Lote ${batchId}] Falha: ${msg}`);
                     }
                 });
@@ -270,7 +294,7 @@ export const EngineProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 // --- PARALLEL PROCESSING END ---
                 
             } catch (err) {
-                addLog("ERROR", `Erro Crítico no ciclo: ${err}`);
+                addLog("ERROR", `Erro Crítico no ciclo: ${translateError(err)}`);
                 setIsRunning(false);
                 setIsCriticalError(true);
             } finally {
