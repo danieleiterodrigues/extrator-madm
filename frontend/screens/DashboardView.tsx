@@ -206,7 +206,18 @@ const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
                 />
                 <Tooltip 
                   cursor={{fill: 'transparent'}}
-                  contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      return (
+                        <div className="bg-white dark:bg-slate-800 p-2 rounded-lg shadow-md border border-slate-100 dark:border-slate-700">
+                          <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                            {payload[0].value}
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
                 />
                 <Bar 
                     dataKey="count" 
