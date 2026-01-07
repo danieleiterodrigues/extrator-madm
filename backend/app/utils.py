@@ -254,6 +254,15 @@ def process_import_file_vectorized(file_path: str, import_id: int) -> List[Dict]
 
     # --- 3. Validation ---
     
+    # Nome
+    missing_nome = df['nome_clean'].isna()
+    # Data
+    missing_data = df['data_nascimento_clean'].isna()
+    # Doc
+    missing_doc = df['documento_clean'].isna()
+    # Motivo
+    missing_motivo = df['motivo_clean'].isna()
+    
     # Telefone
     missing_telefone = df['telefone_clean'].isna()
 
