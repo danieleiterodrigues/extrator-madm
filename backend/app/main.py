@@ -388,13 +388,15 @@ def process_import_background(import_id: int, file_path: str):
             # Use granular transactions for schema updates to avoid long locks
             # One connection for all ALTERS, but commit immediately
             try:
+                print("BACKGROUND: Attempting to acquire schema lock...")
                 with engine.connect() as conn:
                     with conn.begin(): # Explicit transaction
                         for col_name in new_columns:
                             try:
                                 alter_query = text(f'ALTER TABLE people_records ADD COLUMN "{col_name}" TEXT')
+                                print(f"BACKGROUND: Executing ALTER for '{col_name}'...")
                                 conn.execute(alter_query)
-                                print(f"BACKGROUND: Added column '{col_name}'")
+                                print(f"BACKGROUND: Added column '{col_name}' - SUCCESS")
                             except Exception as e:
                                 print(f"BACKGROUND ERROR adding column {col_name}: {e}")
             except Exception as e:
@@ -405,6 +407,7 @@ def process_import_background(import_id: int, file_path: str):
             time.sleep(1)
             
             # Re-open Session
+            print("BACKGROUND: Re-opening DB session...")
             db = SessionLocal()
             db_import = db.query(models.Import).filter(models.Import.id == import_id).first()
             if not db_import:
