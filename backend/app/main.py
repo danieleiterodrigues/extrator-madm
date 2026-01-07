@@ -48,6 +48,19 @@ def startup_db_client():
 
     db = SessionLocal()
     try:
+        # --- RESET STUCK IMPORTS ---
+        # If server was killed during processing, records might be stuck in PROCESSING
+        stuck_imports = db.query(models.Import).filter(models.Import.status.in_(["PROCESSING", "PENDING"])).all()
+        # Note: PENDING might be valid if queue system, but here it's direct background task. 
+        # Actually PENDING is set on upload, then background task immediately runs. 
+        # If server restarts, that background task is lost. So PENDING is also stuck.
+        
+        if stuck_imports:
+            print(f"--- DETECTED {len(stuck_imports)} STUCK IMPORTS (Resetting to ERROR) ---")
+            for imp in stuck_imports:
+                imp.status = "ERROR"
+            db.commit()
+
         # Case insensitive check
         admin = db.query(models.User).filter(func.lower(models.User.username) == "admin").first()
         if not admin:
@@ -482,10 +495,8 @@ async def upload_file(
 
 @app.get("/imports", response_model=List[schemas.ImportList])
 def read_imports(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
-    print(f"DEBUG: ENTERING read_imports endpoint. LIMIT={limit}")
     try:
         imports = db.query(models.Import).order_by(models.Import.uploaded_at.desc()).offset(skip).limit(limit).all()
-        print(f"DEBUG: Found {len(imports)} imports in DB")
         return imports
     except Exception as e:
         print(f"DEBUG: read_imports FAILED: {e}")

@@ -80,7 +80,30 @@ def sync_db_schema(engine, model_base):
                     except Exception as e:
                         print(f"FAILED to add column {column.name}: {e}")
                         
+                        print(f"DEBUG: OperationalError: {e}")
+                        
         conn.commit()
+        
+    # --- PERFORMANCE INDEXES ---
+    print("--- ENSURING PERFORMANCE INDEXES ---")
+    with engine.connect() as conn:
+        # SQLite / Postgres compatible 'IF NOT EXISTS'
+        indexes = [
+            # PeopleRecord
+            "CREATE INDEX IF NOT EXISTS idx_people_records_valid ON people_records (valid)",
+            "CREATE INDEX IF NOT EXISTS idx_people_records_import_id ON people_records (import_id)",
+            # Analysis
+            "CREATE INDEX IF NOT EXISTS idx_analyses_status ON analyses (status)",
+            "CREATE INDEX IF NOT EXISTS idx_analyses_record_id ON analyses (record_id)",
+        ]
+        
+        for idx_stmt in indexes:
+            try:
+                conn.execute(text(idx_stmt))
+            except Exception as e:
+                print(f"Index creation warning: {e}")
+        conn.commit()
+        
     print("--- SCHEMA SYNC COMPLETE ---")
 
 KNOWN_KEYS = {

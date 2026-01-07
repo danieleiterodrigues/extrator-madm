@@ -14,29 +14,42 @@ const ImportView: React.FC<ImportViewProps> = ({ onNavigate }) => {
   const [files, setFiles] = useState<ProcessingFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
+  /* Smart Polling Logic */
+  const timeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
   const fetchData = async () => {
     try {
       const data = await dataService.getImportFiles();
       setFiles(data);
+      
+      // Check if any file is still processing
+      const hasPending = data.some(f => f.status === 'validating');
+      
+      // Clear any existing timeout to avoid duplicates
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      
+      if (hasPending) {
+        // Schedule next poll
+        timeoutRef.current = setTimeout(fetchData, 2000);
+      }
     } catch (error: any) {
       console.error("Failed to fetch imports:", error);
-      alert("Erro ao carregar lista de arquivos: " + (error.message || "Erro desconhecido"));
+      // Optional: don't alert on automatic polling errors to avoid spamming the user
+      // alert("Erro ao carregar lista de arquivos: " + (error.message || "Erro desconhecido"));
     }
   };
 
   useEffect(() => {
+    // Initial Load
     fetchData();
     
-    // Auto-refresh interval
-    const interval = setInterval(() => {
-      // We could check if we need to refresh (e.g. if any file is validating)
-      // But for simplicity/robustness in this demo, just refresh every 2s
-      // A better optimization would be to check a ref or state, but state in setInterval closure is tricky.
-      // So let's just refresh.
-      fetchData();
-    }, 2000);
-
-    return () => clearInterval(interval);
+    // Cleanup on unmount
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
   }, []);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
